@@ -1,0 +1,13 @@
+[project]
+name = "territory-ir"
+version = "0.1.0"
+description = "TerritoryIR — 领地单元片编译/重演/调整核心（统一铺盖 → 真值片 → 条款 → 重演）"
+requires-python = ">=3.10"
+dependencies = ["shapely>=2.0"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["territory_ir*"]
