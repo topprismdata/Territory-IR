@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>TerritoryIR Copilot — 领地围栏对话工作台</title>
+<link rel="stylesheet" href="leaflet.css">
+<style>
+  * { box-sizing: border-box; margin: 0; }
+  body { font: 13px/1.55 -apple-system, "PingFang SC", sans-serif;
+         display: flex; height: 100vh; background: #eceff1; }
+  /* ---------- 左：地图 ---------- */
+  #mapwrap { flex: 1; position: relative; }
+  #map { height: 100%; }
+  #legend { position: absolute; top: 10px; left: 10px; z-index: 1000;
+            background: #fffa; backdrop-filter: blur(4px); border-radius: 8px;
+            padding: 8px 12px; font-size: 11px; color: #37474f;
+            box-shadow: 0 1px 6px rgba(0,0,0,.2); max-width: 260px; }
+  #legend b { font-size: 12px; color: #0d47a1; }
+  #legend .chip { display: inline-block; margin: 3px 6px 0 0; padding: 1px 8px;
+                  border-radius: 10px; cursor: pointer; background: #e3f2fd;
+                  border: 1px solid #90caf9; }
+  #legend .chip:hover { background: #bbdefb; }
+  /* ---------- 右：Copilot ---------- */
+  #side { width: 430px; min-width: 430px; display: flex; flex-direction: column;
+          background: #fff; border-left: 1px solid #cfd8dc;
+          box-shadow: -2px 0 12px rgba(0,0,0,.08); }
+  #side header { padding: 12px 16px; background: linear-gradient(135deg,#1a237e,#3949ab);
+                 color: #fff; }
+  #side header h1 { font-size: 15px; font-weight: 700; }
+  #side header .sub { font-size: 11px; opacity: .85; margin-top: 2px; }
+  #chat { flex: 1; overflow-y: auto; padding: 12px; }
+  .msg { margin-bottom: 10px; max-width: 96%; border-radius: 12px; padding: 8px 12px; }
+  .msg.user { background: #e8eaf6; margin-left: auto; white-space: pre-wrap; }
+  .msg.bot  { background: #f5f5f5; border: 1px solid #eee; white-space: pre-wrap; }
+  .msg.bot b { color: #1a237e; }
+  .fcard { border: 1px solid #e0e0e0; border-left: 4px solid #1e88e5; border-radius: 10px;
+           background: #fff; padding: 8px 10px; margin: 6px 0; cursor: pointer; }
+  .fcard:hover { background: #f5f9ff; }
+  .fcard .nm { font-weight: 700; color: #1565c0; }
+  .fcard .meta { color: #78909c; font-size: 11px; margin-top: 2px; }
+  .fcard .terms { margin-top: 4px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .fcard .terms span { background: #e8f5e9; color: #2e7d32; font-size: 11px;
+                       padding: 1px 8px; border-radius: 9px; }
+  .preview { border: 2px dashed #e53935; border-radius: 10px; padding: 10px;
+             margin: 6px 0; background: #fff8f8; }
+  .preview .btns { margin-top: 8px; }
+  .btn { border: 0; border-radius: 8px; padding: 6px 16px; font-size: 12px;
+         cursor: pointer; margin-right: 8px; }
+  .btn.ok { background: #2e7d32; color: #fff; }
+  .btn.no { background: #eceff1; color: #455a64; }
+  #inputbar { border-top: 1px solid #e0e0e0; padding: 10px; background: #fafafa; }
+  #quick { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+  #quick button { font-size: 11px; border: 1px solid #90caf9; background: #e3f2fd;
+                  color: #1565c0; border-radius: 12px; padding: 2px 10px; cursor: pointer; }
+  #quick button:hover { background: #bbdefb; }
+  #row { display: flex; gap: 8px; align-items: center; }
+  #inp { flex: 1; border: 1px solid #b0bec5; border-radius: 10px; padding: 9px 12px;
+         font-size: 13px; outline: none; }
+  #inp:focus { border-color: #1a237e; }
+  #send { border: 0; background: #1a237e; color: #fff; border-radius: 10px;
+          padding: 9px 18px; cursor: pointer; font-weight: 600; }
+  #send:disabled { opacity: .5; }
+  #upload { font-size: 11px; color: #1565c0; cursor: pointer; text-decoration: underline; }
+</style>
+</head>
+<body>
+<div id="mapwrap">
+  <div id="map"></div>
+  <div id="legend">
+    <b>TerritoryIR Copilot</b><br>
+    绿实线=围栏 · 红虚线=预览<br>
+    <span id="chips"></span>
+  </div>
+</div>
+<div id="side">
+  <header>
+    <h1>TerritoryIR Copilot</h1>
+    <div class="sub">导入围栏 · 人话描述 · 文字建围栏 · 沿路拆分 · 合并</div>
+  </header>
+  <div id="chat"></div>
+  <div id="inputbar">
+    <div id="quick">
+      <button onclick="quick('描述所有围栏')">描述所有围栏</button>
+      <button onclick="quick('联和街道全域，北至广汕公路，建一个围栏')">文字建围栏</button>
+      <button onclick="quick('沿花莞高速把最新围栏分开，西半边')">沿路拆分</button>
+      <button onclick="quick('把前两个围栏合并')">合并</button>
+    </div>
+    <div style="margin-bottom:6px">
+      <span id="upload" onclick="document.getElementById('file').click()">
+        ⇪ 导入围栏文件（GeoJSON）</span>
+      <input type="file" id="file" accept=".json,.geojson" style="display:none">
+    </div>
+    <div id="row">
+      <input id="inp" placeholder="用自然语言操作围栏…（点击地图围栏可 @ 引用）">
+      <button id="send" onclick="send()">发送</button>
+    </div>
+  </div>
+</div>
+
+<script src="leaflet.js"></script>
+<script>
+const map = L.map("map", {zoomSnap: 0.25}).setView([23.15, 113.40], 10);
+L.tileLayer("https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}",
+  {attribution:"© 高德地图", subdomains:["1","2","3","4"], maxZoom:18}).addTo(map);
+const fenceLayer = L.layerGroup().addTo(map);
+const previewLayer = L.layerGroup().addTo(map);
+let STATE = {fences: [], pending: null};
+
+const el = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;");
+
+function bubble(cls, html){
+  const d = document.createElement("div");
+  d.className = "msg " + cls; d.innerHTML = html;
+  el("chat").appendChild(d); el("chat").scrollTop = el("chat").scrollHeight;
+  return d;
+}
+function fenceCard(f, onclick){
+  const terms = (f.terms||[]).map(t=>`<span>${esc(t)}</span>`).join("");
+  return `<div class="fcard" ${onclick?`onclick="${onclick}"`:""}>
+    <div class="nm">${esc(f.name)}</div>
+    <div class="meta">${f.km2} km² · ${(f.pieces??0)} 片</div>
+    ${terms?`<div class="terms">${terms}</div>`:""}</div>`;
+}
+
+function draw(){
+  fenceLayer.clearLayers(); previewLayer.clearLayers();
+  el("chips").innerHTML = STATE.fences.map(f=>
+    `<span class="chip" onclick="focusFence('${f.id}')">${esc(f.name.slice(0,12))}</span>`).join("");
+  for (const f of STATE.fences){
+    const rings = f.rings && f.rings.length > 1 ? f.rings : [f.rings[0]];
+    for (const r of rings){
+      const p = L.polygon(r.map(q=>[q[1],q[0]]),
+        {color: f.color, weight: 2, fillOpacity: .35});
+      p.bindTooltip(`${esc(f.name)} · ${f.km2} km² · 点击引用`);
+      p.on("click", () => {
+        el("inp").value = "@" + f.name + " ";
+        el("inp").focus();
+        bubble("bot", `已引用 **${esc(f.name)}**（${f.km2} km²）。继续输入指令，例如「沿花莞高速分开，西半边留给我」。`);
+      });
+      fenceLayer.addLayer(p);
+    }
+  }
+  const pv = STATE.pending;
+  if (pv && pv.result){
+    for (const f of pv.result)
+      for (const r of f.rings)
+        L.polygon(r.map(q=>[q[1],q[0]]), {color:"#e53935", weight:4,
+          dashArray:"8 5", fillColor:"#e53935", fillOpacity:.15,
+          interactive:false}).addTo(previewLayer);
+  }
+}
+function focusFence(id){
+  const f = STATE.fences.find(x=>x.id===id); if (!f) return;
+  const pts = f.rings[0].map(q=>[q[1],q[0]]);
+  map.fitBounds(L.polygon(pts).getBounds().pad(0.3));
+}
+
+async function refresh(){
+  STATE = await (await fetch("/api/state")).json();
+  draw();
+}
+
+async function send(){
+  const inp = el("inp"); const text = inp.value.trim();
+  if (!text) return;
+  inp.value = ""; el("send").disabled = true;
+  bubble("user", esc(text));
+  const wait = bubble("bot", "⏳ LLM 解析中…");
+  try{
+    const r = await (await fetch("/api/chat", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({text})})).json();
+    wait.innerHTML = r.reply.replace(/\*\*(.+?)\*\*/g,"<b>$1</b>");
+    if (r.state){ STATE = r.state; draw(); }
+    if (r.focus) focusFence(r.focus);
+    if (r.pending && r.pending.result){
+      const d = document.createElement("div");
+      d.className = "preview";
+      d.innerHTML = `<b>预览（未应用）</b><div class="btns">
+        <button class="btn ok" onclick="applyP()">✓ 应用</button>
+        <button class="btn no" onclick="discardP()">✕ 放弃</button></div>`;
+      wait.appendChild(d);
+    }
+  }catch(e){ wait.textContent = "✗ " + e; }
+  el("send").disabled = false;
+}
+async function applyP(){
+  const r = await (await fetch("/api/apply", {method:"POST"})).json();
+  bubble("bot", r.reply.replace(/\*\*(.+?)\*\*/g,"<b>$1</b>"));
+  if (r.state){ STATE = r.state; draw(); }
+}
+async function discardP(){
+  const r = await (await fetch("/api/discard", {method:"POST"})).json();
+  bubble("bot", r.reply);
+  STATE = r.state; draw();
+}
+function quick(t){ el("inp").value = t; send(); }
+
+el("file").addEventListener("change", async e => {
+  const file = e.target.files[0]; if (!file) return;
+  const text = await file.text();
+  let geo; try { geo = JSON.parse(text); } catch { bubble("bot","✗ 文件不是合法 JSON"); return; }
+  const name = file.name.replace(/\.(geo)?json$/i,"");
+  bubble("user", `⇪ 导入 ${esc(file.name)}`);
+  const r = await (await fetch("/api/import", {method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({name, geojson: geo})})).json();
+  bubble("bot", (r.reply||("✗ "+r.error)).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>"));
+  if (r.state){ STATE = r.state; draw(); }
+  if (r.focus) focusFence(r.focus);
+  e.target.value = "";
+});
+el("inp").addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+
+(async () => {
+  await refresh();
+  bubble("bot", "👋 我是 TerritoryIR Copilot。<br>" +
+    "1️⃣ 点右上「⇪ 导入围栏文件」上传 GeoJSON，或直接说「导入围栏」<br>" +
+    "2️⃣ 「描述所有围栏」生成人话<br>" +
+    "3️⃣ 「联和街道全域，北至广汕公路，建围栏」文字建围栏<br>" +
+    "4️⃣ 「沿花莞高速把 XX 分开，西半边」<br>" +
+    "5️⃣ 「把 A 和 B 合并」<br>" +
+    "点击地图上的围栏可 @ 引用。");
+})();
+</script>
+</body>
+</html>
