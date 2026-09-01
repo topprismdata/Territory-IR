@@ -17,7 +17,7 @@ from shapely import ops, wkt
 from shapely.geometry import Polygon
 from shapely.strtree import STRtree
 
-from .coords import gcj2wgs
+from .coords import gcj2wgs, gcj2wgs_vec
 
 def _norm_key(s: str) -> str:
     import re as _re
@@ -151,9 +151,17 @@ class Dataset:
         self.U = U
         self.Ut = STRtree([x[0] for x in self.U])
 
-        # 地物贴附
+        # 地物贴附（一次性向量化 GCJ→WGS，避免 6261 次逐片 transform）
+        import numpy as np
+        import shapely
         self._feats = {}
         self.FEATS = defaultdict(set)
+        all_geoms = [self.U[k][0] for k in range(len(self.U))]
+        coords_arr = shapely.get_coordinates(all_geoms)
+        lon2, lat2 = gcj2wgs_vec(coords_arr[:, 0], coords_arr[:, 1])
+        self.U_wgs = list(shapely.set_coordinates(
+            np.array(all_geoms, dtype=object),
+            np.column_stack([lon2, lat2])))
         for _k in range(len(self.U)):
             for _nm in self.feats_of(_k):
                 self.FEATS[_nm].add(_k)
@@ -196,7 +204,7 @@ class Dataset:
     # ---------- 地物贴附 ----------
     def feats_of(self, k):
         if k not in self._feats:
-            gw = ops.transform(lambda x, y: gcj2wgs(x, y), self.U[k][0])
+            gw = self.U_wgs[k]
             s = set()
             for j in self.ftt.query(gw.buffer(self.FEAT_BUF)):
                 if self.feat_geoms[j].distance(gw) <= self.FEAT_BUF:

@@ -49,43 +49,48 @@ def _norm_name(s: str) -> str:
     return _re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(s).lower())
 
 
+_line_cache: dict = {}
+
+
 def road_line_gcj(ds: Dataset, name: str):
-    """OSM 地物(WGS) → GCJ 折线并集。名称匹配大小写/分隔符不敏感；
-    找不到时给出最相近的 5 个路名建议。"""
-    import difflib
+    """OSM 地物(WGS) → GCJ 折线集（不做 union，project 直接支持）。
+
+    名称匹配大小写/分隔符不敏感 + 编号别名；进程级缓存。"""
+    key = _norm_name(name)
+    if key in _line_cache:
+        return _line_cache[key]
+    from shapely.geometry import LineString
+    from shapely import ops as _ops
+
     norm = _norm_name(name)
 
-    def _to_gcj(geoms):
-        line = unary_union(geoms)
-        from shapely import ops as _ops
-        return _ops.transform(lambda x, y: tuple(wgs2gcj(x, y)), line)
-
-    # ① OSM 国道/省道编号（refs，最精确：G324、G105…）
+    # ① refs：国道/省道编号（WGS）
     for ref, segs in getattr(ds, "osm_refs", {}).items():
-        if norm and norm == _norm_name(ref):
-            from shapely.geometry import LineString
+        if norm == _norm_name(ref):
             lines = [LineString(seg) for seg in segs if len(seg) >= 2]
             line = unary_union(lines)
-            from shapely import ops as _ops
-            return _ops.transform(lambda x, y: tuple(wgs2gcj(x, y)), line)
+            break
+    else:
+        # ② 地物名子串（WGS）
+        matched = [g for g, n in zip(ds.feat_geoms, ds.feat_names)
+                   if norm and norm in _norm_name(n)]
+        if not matched:
+            # ③ 别名映射（G324→广汕公路 等）
+            resolved = getattr(ds, "road_aliases", {}).get(norm)
+            if resolved:
+                matched = [g for g, n in zip(ds.feat_geoms, ds.feat_names)
+                           if _norm_name(resolved) in _norm_name(n)]
+        if not matched:
+            import difflib
+            cands = sorted({n for n in ds.feat_names if n},
+                           key=lambda n: -difflib.SequenceMatcher(
+                               None, norm, _norm_name(n)).ratio())[:5]
+            raise ValueError(f"路网中找不到「{name}」。相近路名：{'、'.join(cands)}")
+        line = unary_union(matched)
 
-    # ② 地物名子串匹配
-    matched = [g for g, n in zip(ds.feat_geoms, ds.feat_names)
-               if norm and norm in _norm_name(n)]
-    if matched:
-        return _to_gcj(matched)
-
-    # ③ 别名映射（G324→广汕公路 等）
-    resolved = getattr(ds, "road_aliases", {}).get(norm)
-    if resolved:
-        return _to_gcj([g for g, n in zip(ds.feat_geoms, ds.feat_names)
-                        if _norm_name(resolved) in _norm_name(n)])
-
-    # ④ 建议
-    cands = sorted({n for n in ds.feat_names if n},
-                   key=lambda n: -difflib.SequenceMatcher(
-                       None, norm, _norm_name(n)).ratio())[:5]
-    raise ValueError(f"路网中找不到「{name}」。相近路名：{'、'.join(cands)}")
+    line = _ops.transform(lambda x, y: tuple(wgs2gcj(x, y)), line)
+    _line_cache[key] = line
+    return line
 
 
 def split_pieces_by_road(ds: Dataset, pieces, line, side: str) -> tuple[set, set]:

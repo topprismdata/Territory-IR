@@ -197,8 +197,8 @@ class Copilot:
                          f"**{f1['name']}** {f1['km2']} km² ＋ "
                          f"**{f2['name']}** {f2['km2']} km²。确认后点「应用」。")
             elif act == "merge":
-                step(f"🔗 片并集合并 {len(tg or [])} 个围栏…")
                 tg = intent.get("targets") or []
+                step(f"🔗 片并集合并 {len(tg)} 个围栏…")
                 fs = [self.sess.find(s) for s in tg]
                 removed = [dict(name=f["name"], id=f["id"]) for f in fs]
                 self.pending = {"kind": "merge", "result": None,

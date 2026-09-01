@@ -42,7 +42,8 @@ class Session:
         p = self.persist_dir / f"{sid}.json"
         if p.exists():
             rows = json.loads(p.read_text(encoding="utf-8"))
-            self.fences = [{**r, "pieces": set(r["pieces"]) if r["pieces"] else None}
+            self.fences = [{**r, "pieces": set(r["pieces"]) if r["pieces"] else None,
+                            "clauses": r.get("clauses", [])}
                            for r in rows]
 
     # ---------- 基础 ----------
@@ -103,7 +104,7 @@ class Session:
                  "pieces": None, "terms": [],
                  "km2": self._km2(self.ds, poly), "color": self._color()}
         self.fences.append(fence)
-        self.compile(fence)
+        self.compile(fence)   # ★ 全生命周期唯一一次编译
         self.save()
         return fence
 
@@ -130,12 +131,35 @@ class Session:
             raise ValueError("GeoJSON 中没有可用的 Polygon")
         return out
 
+    def describe_pieces(self, pieces) -> list[str]:
+        """轻量人话：片集合的街道构成统计（毫秒级，无编译）。"""
+        from collections import Counter
+        pieces = set(pieces)
+        cnt = Counter(self.ds.U[k][1] for k in pieces)
+        totals = Counter(self.ds.U[k][1] for k in range(len(self.ds.U)))
+        feats_by = {k: self.ds.feats_of(k) for k in pieces}
+        parts = []
+        for st, n in cnt.most_common():
+            st_pieces = {k for k in pieces if self.ds.U[k][1] == st}
+            if st in totals and n == totals[st]:
+                parts.append(st)          # 全域
+                continue
+            best_fm, best_c = None, 1
+            for k in st_pieces:
+                for fm in feats_by[k]:
+                    c = sum(1 for kk in st_pieces if fm in feats_by[kk])
+                    if c > best_c:
+                        best_fm, best_c = fm, c
+            parts.append(f"{st}沿{best_fm}" if best_fm else f"{st}一带")
+        return parts
+
     # ---------- 编译/描述 ----------
     def compile(self, fence) -> dict:
         row = self.ds.compile_fence(
             {"area_id": fence["id"], "dealer": fence["name"],
              "rings": fence["rings"], "area_km2": fence["km2"]})
         fence["pieces"] = set(row["T"])
+        fence["clauses"] = row["ir"]["clauses"]
         fence["terms"] = row["human_terms"]
         fence["engine_terms"] = row["engine_terms"]
         fence["j"] = row["engine_J"]
@@ -143,10 +167,8 @@ class Session:
 
     def describe(self, name_substr) -> dict:
         f = self.find(name_substr)
-        row = self.compile(f)["row"]
-        self.save()   # 编译刷新（engine_terms 等）落盘
-        return {"fence": self.pub(f), "terms": row["human_terms"],
-                "j": row["engine_J"], "pieces": len(row["T"])}
+        return {"fence": self.pub(f), "terms": f["terms"],
+                "j": f.get("j"), "pieces": len(f["pieces"] or [])}
 
     def pub(self, fence) -> dict:
         return {"id": fence["id"], "name": fence["name"], "rings": fence["rings"],
@@ -243,11 +265,9 @@ class Session:
         geom2 = pieces_union(self.ds, f["pieces"])
         f["rings"] = self._rings_of(geom2)
         f["km2"] = self._km2(self.ds, geom2)
-        row = self.ds.compile_fence({"area_id": f["id"], "dealer": f["name"],
-                                     "rings": [f["rings"][0]],
-                                     "area_km2": f["km2"]})
-        f["terms"] = row["human_terms"]
-        f["engine_terms"] = row["engine_terms"]
+        f["clauses"] = f.get("clauses", []) + [
+            {"type": "pieces", "ids": sorted(added)}]
+        f["terms"] = self.describe_pieces(f["pieces"])
         self.save()
         return f, len(added)
 
@@ -268,7 +288,7 @@ class Session:
             good = []
             for n in cands:
                 try:
-                    ln = road_line_gcj(self.ds, n)
+                    ln = self.road_line(n)
                     a, b = split_pieces_by_road(self.ds, f["pieces"], ln, "north")
                 except Exception:  # noqa: BLE001
                     continue
@@ -287,11 +307,21 @@ class Session:
         f2 = {"id": uuid.uuid4().hex[:8], "name": f["name"],
               "rings": self._rings_of(g2), "pieces": other, "terms": f["terms"],
               "km2": self._km2(self.ds, g2), "color": self._color()}
-        for nf in (f1, f2):
-            row = self.ds.compile_fence(
-                {"area_id": nf["id"], "dealer": nf["name"],
-                 "rings": [nf["rings"][0]], "area_km2": nf["km2"]})
-            nf["terms"] = row["human_terms"]
+        def clauses_for(pieces):
+            """父条款按片归属分家：全在 → 原样继承；跨界 → pieces 精确保真。"""
+            out = []
+            for cl in f.get("clauses", []):
+                pc = self.ds.clause_pieces(cl) & f["pieces"]
+                inside = pc & pieces
+                if not inside:
+                    continue
+                out.append(cl if pc <= pieces
+                           else {"type": "pieces", "ids": sorted(inside)})
+            return out
+        f1["clauses"] = clauses_for(chosen)
+        f2["clauses"] = clauses_for(other)
+        f1["terms"] = self.describe_pieces(chosen)
+        f2["terms"] = self.describe_pieces(other)
         self.fences += [f1, f2]
         self.save()
         return f1, f2
@@ -315,12 +345,10 @@ class Session:
         merged = {"id": uuid.uuid4().hex[:8],
                   "name": "+".join(f["name"] for f in fs)[:24],
                   "rings": self._rings_of(geom), "pieces": pieces,
-                  "terms": [], "km2": self._km2(self.ds, geom),
+                  "clauses": [cl for f in fs for cl in f.get("clauses", [])],
+                  "terms": self.describe_pieces(pieces),
+                  "km2": self._km2(self.ds, geom),
                   "color": fs[0]["color"]}
-        row = self.ds.compile_fence(
-            {"area_id": merged["id"], "dealer": merged["name"],
-             "rings": [merged["rings"][0]], "area_km2": merged["km2"]})
-        merged["terms"] = row["human_terms"]
         self.fences.append(merged)
         self.save()
         return merged
