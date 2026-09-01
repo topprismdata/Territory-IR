@@ -64,10 +64,17 @@ def chat(prompt: str, data_dir, timeout: int = 90) -> str:
 
 
 def extract_json(text: str) -> dict:
-    m = re.search(r"\{.*\}", text, re.S)
+    m = re.search(r"\{", text)
     if not m:
         raise ValueError(f"LLM 未返回 JSON: {text[:120]}")
-    return json.loads(m.group(0))
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(text[m.start():])
+        return obj
+    except json.JSONDecodeError:
+        m2 = re.search(r"\{.*\}", text, re.S)
+        if not m2:
+            raise ValueError(f"LLM 未返回 JSON: {text[:120]}")
+        return json.loads(m2.group(0))
 
 
 def parse_intent(text: str, data_dir, fence_names: list) -> dict:
@@ -96,9 +103,10 @@ def parse_intent(text: str, data_dir, fence_names: list) -> dict:
         '无法判断: {"action":"unknown","reason":"一句话"}\n\n'
         f"当前围栏清单:\n{names}\n\n用户指令: {text}"
     )
-    # 确定性直通：粘贴人话（全角/半角 | 分隔）+ 生成围栏
-    norm = text.replace("｜", "|").replace("／", "|")
-    if "|" in norm:
+    # 确定性直通：粘贴人话（| ; ； ｜ ／ 任一分隔）+ 生成围栏
+    norm = text.replace("｜", "|").replace("；", ";").replace("／", "|")
+    if "|" in norm or ";" in norm:
+        norm = norm.replace(";", "|")
         terms = [x.strip() for x in norm.split("|") if x.strip()]
         name = "条款围栏"
         if terms and ("围栏" in terms[-1] or "生成" in terms[-1]):

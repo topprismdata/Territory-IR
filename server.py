@@ -29,6 +29,60 @@ WEB = ROOT / "web"
 DATA = Path(__file__).resolve().parent.parent / "sales-data" / "gz"
 
 
+import re as _re
+
+_DIR = {"东": "east", "西": "west", "南": "south", "北": "north"}
+
+
+def _fast_intent(text: str):
+    """常见句式的确定性解析（毫秒级）。返回 None = 交给 LLM。"""
+    t = text.replace("@", " ").replace("｜", "|").replace("；", ";").replace("／", "|")
+
+    # 条款直通（| 或 ; 分隔的条款串）
+    if ("|" in t or ";" in t) and len(t.split("|")) + len(t.split(";")) > 4:
+        terms = [x.strip() for x in _re.split(r"[|;]", t) if x.strip()]
+        if terms:
+            return {"action": "fence_from_terms", "name": "条款围栏", "terms": terms}
+
+    # 描述
+    m = _re.search(r"描述\s*(.*)", t)
+    if m and ("描述" in t[:2]):
+        return {"action": "describe", "target": m.group(1).strip()}
+
+    # 合并
+    m = _re.search(r"(?:把|将)?\s*(.+?)\s*(?:和|与|跟)\s*(.+?)\s*合并", t)
+    if m:
+        return {"action": "merge",
+                "targets": [m.group(1).strip(), m.group(2).strip()]}
+
+    # 删除/清空
+    m = _re.search(r"(?:删除|清空)\s*(.*)", t)
+    if m:
+        return {"action": "clear",
+                "target": "" if ("全部" in t or "所有" in t or not m.group(1).strip())
+                else m.group(1).strip()}
+
+    # 扩展
+    m = _re.search(r"把\s*(.+?)向([东南西北])扩展到\s*(.+)", t)
+    if m:
+        return {"action": "expand", "target": m.group(1).strip(),
+                "dir": _DIR[m.group(2)], "road": m.group(3).strip()}
+
+    # 沿路切分：「A 沿着X切成南北2部分」「沿X分开 西半边」
+    m = _re.search(r"(?:把\s*)?(.+?)沿[着]?\s*(.+?)(?:切成|分割为|分为|分成|分开|一分为二)\s*(.*)", t)
+    if m:
+        target = m.group(1).strip()
+        road = m.group(2).strip()
+        rest = m.group(3) or ""
+        side = "north"
+        for w, sd in _DIR.items():
+            if w in rest or w in road:
+                side = sd
+                break
+        return {"action": "split", "target": target, "road": road, "side": side}
+    return None
+
+
 class Copilot:
     def __init__(self, data_dir: Path):
         self.ds = Dataset.guangzhou(data_dir=str(data_dir))
@@ -55,10 +109,16 @@ class Copilot:
     def chat(self, text: str, emit=None) -> dict:
         step = (lambda msg: emit(msg)) if emit else (lambda msg: None)
         step(f"收到指令：「{text[:40]}{'…' if len(text) > 40 else ''}」")
-        step("🧠 LLM 解析意图…")
-        intent = tir_llm.parse_intent(
-            text, str(self.ds.data_dir),
-            {"fence_names": [f["name"] for f in self.sess.fences]})
+        fast = _fast_intent(text)
+        if fast is not None:
+            step("⚡ 规则直通（跳过 LLM）")
+            intent = fast
+        else:
+            step("🧠 LLM 解析意图…")
+        if fast is None:
+            intent = tir_llm.parse_intent(
+                text, str(self.ds.data_dir),
+                {"fence_names": [f["name"] for f in self.sess.fences]})
         act = intent["action"]
         step(f"📋 意图 = {act}")
         reply, focus, pending = "", None, None

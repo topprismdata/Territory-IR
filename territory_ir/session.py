@@ -2,6 +2,10 @@
 
 所有围栏 = {id, name, rings:[[环]...], pieces:set|None, terms, km2, color}
 pieces 非空时按片运算（可拆可并）；为空（库外导入）时仅几何视图。
+
+★ 核心不变量：不存在物理切割。切分/合并/扩展全部是【片归属变更】——
+  片是原子，任何操作只增删改「片属于哪个围栏」，永不修改片几何。
+  围栏环(rings)永远是所属片并集的派生视图。
 """
 from __future__ import annotations
 

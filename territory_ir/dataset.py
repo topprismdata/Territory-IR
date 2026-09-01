@@ -162,6 +162,15 @@ class Dataset:
                                 if r.get("name", "")}
         self._VOCAB = None
 
+        # 国道/省道编号 → 几何（来自 fetch_region_osm 的 osm_parsed.refs，WGS）
+        self.osm_refs = {}
+        for rp in (Path(self.data_dir) / "osm_refs.json",
+                   Path(self.data_dir) / "osm_parsed.json"):
+            if rp.exists():
+                parsed = json.loads(rp.read_text(encoding="utf-8"))
+                self.osm_refs = parsed.get("refs", parsed)  # osm_refs.json 或 osm_parsed 格式
+                break
+
         # 道路编号别名（全局映射）：g324 → 广汕公路 等
         self.road_aliases = {}
         ap = Path(self.data_dir) / "road_aliases.json"
