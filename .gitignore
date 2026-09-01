@@ -1,0 +1,11 @@
+__pycache__/
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+.DS_Store
+# 业务数据（敏感，不入库）
+geojson/
+sessions/
+territory_ir_dataset.json
+llm_config.json
