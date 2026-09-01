@@ -40,13 +40,27 @@ def osm_catalog(ds: Dataset) -> dict:
     return {"roads": roads, "rivers": {}, "refs": {}, "districts": districts}
 
 
+def _norm_name(s: str) -> str:
+    import re as _re
+    return _re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(s).lower())
+
+
 def road_line_gcj(ds: Dataset, name: str):
-    """OSM 地物(WGS) → GCJ 折线并集（仅作分堆/过滤判据，不改几何）。"""
-    geoms = [g for g, n in zip(ds.feat_geoms, ds.feat_names)
-             if name and name in n]
-    if not geoms:
-        raise ValueError(f"路网中找不到「{name}」")
-    line = unary_union(geoms)
+    """OSM 地物(WGS) → GCJ 折线并集。名称匹配大小写/分隔符不敏感；
+    找不到时给出最相近的 5 个路名建议。"""
+    import difflib
+    norm = _norm_name(name)
+    resolved = getattr(ds, "road_aliases", {}).get(norm, name)
+    if resolved != name:
+        norm = _norm_name(resolved)   # 别名（G324→广汕公路 等）
+    matched = [g for g, n in zip(ds.feat_geoms, ds.feat_names)
+               if norm and norm in _norm_name(n)]
+    if not matched:
+        cands = sorted({n for n in ds.feat_names if "road" or n},
+                       key=lambda n: -difflib.SequenceMatcher(
+                           None, norm, _norm_name(n)).ratio())[:5]
+        raise ValueError(f"路网中找不到「{name}」。相近路名：{'、'.join(cands)}")
+    line = unary_union(matched)
     from shapely import ops as _ops
     return _ops.transform(lambda x, y: tuple(wgs2gcj(x, y)), line)
 

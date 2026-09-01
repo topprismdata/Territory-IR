@@ -255,7 +255,24 @@ class Session:
         line = road_line_gcj(self.ds, road)
         chosen, other = split_pieces_by_road(self.ds, f["pieces"], line, side)
         if not chosen or not other:
-            raise ValueError(f"切分结果有一侧为空（整块都在一侧），无法拆分")
+            # 建议：真正能把片分成两侧（且每侧≥20%）的路段
+            fp = Polygon(f["rings"][0])
+            if not fp.is_valid:
+                fp = fp.buffer(0)
+            cands = {n for j, n in enumerate(self.ds.feat_names)
+                     if self.ds.feat_geoms[j].intersects(fp)}
+            good = []
+            for n in cands:
+                try:
+                    ln = road_line_gcj(self.ds, n)
+                    a, b = split_pieces_by_road(self.ds, f["pieces"], ln, "north")
+                except Exception:  # noqa: BLE001
+                    continue
+                if a and b and min(len(a), len(b)) >= max(1, len(f["pieces"]) // 5):
+                    good.append(n)
+            hint = ("；该围栏可被这些路切分："
+                    + "、".join(sorted(good)[:6])) if good else ""
+            raise ValueError(f"「{road}」分不开这个围栏（整块在一侧）{hint}")
         self.fences.remove(f)
         side_cn = {"west": "西", "east": "东", "south": "南", "north": "北"}[side]
         g1 = pieces_union(self.ds, chosen)

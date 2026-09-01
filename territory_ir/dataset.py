@@ -19,6 +19,11 @@ from shapely.strtree import STRtree
 
 from .coords import gcj2wgs
 
+def _norm_key(s: str) -> str:
+    import re as _re
+    return _re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(s).lower())
+
+
 CLASS_RANK = {"motorway": 0, "motorway_link": 1, "trunk": 1, "trunk_link": 2,
               "primary": 2, "primary_link": 3, "secondary": 3,
               "secondary_link": 4, "tertiary": 4, "tertiary_link": 5,
@@ -156,6 +161,17 @@ class Dataset:
         self._river_name_set = {r.get("name", "") for r in self.osm.get("rivers", [])
                                 if r.get("name", "")}
         self._VOCAB = None
+
+        # 道路编号别名（全局映射）：g324 → 广汕公路 等
+        self.road_aliases = {}
+        ap = Path(self.data_dir) / "road_aliases.json"
+        if not ap.exists():
+            ap = Path(__file__).resolve().parent / "road_aliases.json"
+        if ap.exists():
+            raw = json.loads(ap.read_text(encoding="utf-8"))
+            for k, v in raw.items():
+                if not k.startswith("_"):
+                    self.road_aliases[_norm_key(k)] = v
 
     def _add_feat(self, nm, g, rk_default):
         parts = ([g] if g.geom_type == "LineString"

@@ -75,6 +75,7 @@ def parse_intent(text: str, data_dir, fence_names: list) -> dict:
 
     describe / fence_from_text / split / merge / unknown
     """
+    text = text.replace("@", "")
     names = "\n".join(fence_names) or "（暂无）"
     prompt = (
         "你是领地围栏助手。把用户指令解析为 JSON，只输出 JSON。\n"
@@ -85,7 +86,8 @@ def parse_intent(text: str, data_dir, fence_names: list) -> dict:
         "没有的方向不要编\n"
         '动作三 沿路切分: {"action":"split","target":"围栏名子串",'
         '"road":"路名","side":"west|east|south|north"}\n'
-        "  - side=用户**说到的**那一侧（\"西半边留给我\"→west）\n"
+        "  - side=用户**说到的**那一侧；只说\"切成南北/东西两块\"没指定哪侧时填 \"north\"\n"
+        "  - 国道编号（如 g324）如实填入 road\n"
         '动作四 合并: {"action":"merge","targets":["围栏A子串","围栏B子串"]}\n'
         '动作五 片条款建围栏: {"action":"fence_from_terms","name":"名","terms":["凤凰街道","新塘街道沿天顺路"]}\n'
         '动作六 扩展: {"action":"expand","target":"围栏名子串","dir":"west|east|south|north","road":"界路名"}\n'
