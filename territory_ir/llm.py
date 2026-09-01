@@ -88,6 +88,8 @@ def parse_intent(text: str, data_dir, fence_names: list) -> dict:
         "  - side=用户**说到的**那一侧（\"西半边留给我\"→west）\n"
         '动作四 合并: {"action":"merge","targets":["围栏A子串","围栏B子串"]}\n'
         '动作五 片条款建围栏: {"action":"fence_from_terms","name":"名","terms":["凤凰街道","新塘街道沿天顺路"]}\n'
+        '动作六 扩展: {"action":"expand","target":"围栏名子串","dir":"west|east|south|north","road":"界路名"}\n'
+        '  - 例：「把A向西扩展到华南快速」→ dir=west, road=华南快速\n'
         '动作五 删除: {"action":"clear","target":"围栏名子串或空(空=全部)"}\n'
         '无法判断: {"action":"unknown","reason":"一句话"}\n\n'
         f"当前围栏清单:\n{names}\n\n用户指令: {text}"

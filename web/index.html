@@ -48,6 +48,11 @@
          cursor: pointer; margin-right: 8px; }
   .btn.ok { background: #2e7d32; color: #fff; }
   .btn.no { background: #eceff1; color: #455a64; }
+  #proc { height: 108px; overflow-y: auto; background: #102027; color: #80cbc4;
+          font: 11px/1.6 "SF Mono", Menlo, monospace; padding: 6px 10px;
+          border-top: 2px solid #1a237e; }
+  #proc .t { color: #546e7a; margin-right: 6px; }
+  #proc .done { color: #a5d6a7; }
   #inputbar { border-top: 1px solid #e0e0e0; padding: 10px; background: #fafafa; }
   #quick { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
   #quick button { font-size: 11px; border: 1px solid #90caf9; background: #e3f2fd;
@@ -78,6 +83,7 @@
     <div class="sub">导入围栏 · 人话描述 · 文字建围栏 · 沿路拆分 · 合并</div>
   </header>
   <div id="chat"></div>
+  <div id="proc"></div>
   <div id="inputbar">
     <div id="quick">
       <button onclick="quick('描述所有围栏')">描述所有围栏</button>
@@ -167,24 +173,56 @@ async function send(){
   if (!text) return;
   inp.value = ""; el("send").disabled = true;
   bubble("user", esc(text));
-  const wait = bubble("bot", "⏳ LLM 解析中…");
+  const wait = bubble("bot", "⏳ 处理中…");
+  procLine("🚀 开始处理");
   try{
-    const r = await (await fetch("/api/chat", {method:"POST",
-      headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({text})})).json();
-    wait.innerHTML = r.reply.replace(/\*\*(.+?)\*\*/g,"<b>$1</b>");
-    if (r.state){ STATE = r.state; draw(); }
-    if (r.focus) focusFence(r.focus);
-    if (r.pending && r.pending.result){
-      const d = document.createElement("div");
-      d.className = "preview";
-      d.innerHTML = `<b>预览（未应用）</b><div class="btns">
-        <button class="btn ok" onclick="applyP()">✓ 应用</button>
-        <button class="btn no" onclick="discardP()">✕ 放弃</button></div>`;
-      wait.appendChild(d);
+    const resp = await fetch("/api/chat/stream", {method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify({text})});
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "", payload = null;
+    while (true){
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, {stream:true});
+      let idx;
+      while ((idx = buf.indexOf("\n\n")) >= 0){
+        const chunk = buf.slice(0, idx); buf = buf.slice(idx + 2);
+        if (!chunk.startsWith("data: ")) continue;
+        const data = chunk.slice(6).trim();
+        if (data === "[DONE]"){ payload = payload || {reply:"（空）"}; continue; }
+        const ev = JSON.parse(data);
+        if (ev.type === "step") procLine(ev.text);
+        else if (ev.type === "done") payload = ev;
+      }
     }
-  }catch(e){ wait.textContent = "✗ " + e; }
+    if (payload){
+      wait.innerHTML = (payload.reply||"（空）").replace(/\*\*(.+?)\*\*/g,"<b>$1</b>");
+      procLine("✅ 完成", true);
+      if (payload.state){ STATE = payload.state; draw(); }
+      if (payload.focus) focusFence(payload.focus);
+      if (payload.pending && payload.pending.result){
+        const d = document.createElement("div");
+        d.className = "preview";
+        d.innerHTML = `<b>预览（未应用）</b><div class="btns">
+          <button class="btn ok" onclick="applyP()">✓ 应用</button>
+          <button class="btn no" onclick="discardP()">✕ 放弃</button></div>`;
+        wait.appendChild(d);
+      }
+    }
+  }catch(e){
+    wait.textContent = "✗ 连接失败: " + e;
+    procLine("✗ 失败: " + e, true);
+  }
   el("send").disabled = false;
+}
+function procLine(text, isDone){
+  const d = document.createElement("div");
+  const ts = new Date().toLocaleTimeString("zh-CN", {hour12:false});
+  d.innerHTML = `<span class="t">${ts}</span>${esc(text)}`;
+  if (isDone) d.classList.add("done");
+  el("proc").appendChild(d);
+  el("proc").scrollTop = el("proc").scrollHeight;
 }
 async function applyP(){
   const r = await (await fetch("/api/apply", {method:"POST"})).json();

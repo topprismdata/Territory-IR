@@ -218,6 +218,35 @@ class Session:
         fence["_clauses"] = clauses
         return fence
 
+    # ---------- 扩展到界路 ----------
+    def expand(self, name_substr, direction, road) -> tuple[dict, int]:
+        """沿方向扩展围栏直到界路（片归属变更，新增相邻片）。"""
+        side = {"west": "east", "east": "west",
+                "south": "north", "north": "south"}[direction]
+        f = self.find(name_substr)
+        if not f["pieces"]:
+            raise ValueError(f"「{f['name']}」不在单元库覆盖内，无法按片扩展")
+        line = road_line_gcj(self.ds, road)
+        allp = set(range(len(self.ds.U)))
+        side_pieces, _ = split_pieces_by_road(self.ds, allp, line, side)
+        geom = pieces_union(self.ds, f["pieces"])
+        adj = {k for k in side_pieces
+               if self.ds.U[k][0].distance(geom) <= 0.045}  # ≈5km 邻接带
+        added = adj - set(f["pieces"])
+        if not added:
+            raise ValueError(f"没有可扩展的相邻片（可能已到达「{road}」）")
+        f["pieces"] = set(f["pieces"]) | added
+        geom2 = pieces_union(self.ds, f["pieces"])
+        f["rings"] = self._rings_of(geom2)
+        f["km2"] = self._km2(self.ds, geom2)
+        row = self.ds.compile_fence({"area_id": f["id"], "dealer": f["name"],
+                                     "rings": [f["rings"][0]],
+                                     "area_km2": f["km2"]})
+        f["terms"] = row["human_terms"]
+        f["engine_terms"] = row["engine_terms"]
+        self.save()
+        return f, len(added)
+
     # ---------- 3. 沿路拆分 ----------
     def split(self, name_substr, road, side) -> tuple[dict, dict]:
         f = self.find(name_substr)

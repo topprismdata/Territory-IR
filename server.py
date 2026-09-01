@@ -52,14 +52,19 @@ class Copilot:
         return {"kind": p["kind"], "desc": p["desc"], "result": result,
                 "removed": removed}
 
-    def chat(self, text: str) -> dict:
+    def chat(self, text: str, emit=None) -> dict:
+        step = (lambda msg: emit(msg)) if emit else (lambda msg: None)
+        step(f"收到指令：「{text[:40]}{'…' if len(text) > 40 else ''}」")
+        step("🧠 LLM 解析意图…")
         intent = tir_llm.parse_intent(
             text, str(self.ds.data_dir),
             {"fence_names": [f["name"] for f in self.sess.fences]})
         act = intent["action"]
+        step(f"📋 意图 = {act}")
         reply, focus, pending = "", None, None
         try:
             if act == "describe":
+                step("📖 编译围栏 → 真值片 + 条款回放…")
                 tgt = (intent.get("target") or "").strip()
                 ALL = ("所有围栏", "全部", "所有", "all", "")
                 if tgt and tgt not in ALL:
@@ -85,6 +90,7 @@ class Copilot:
                                      + " | ".join(f.get("engine_terms") or []))
                     reply = "\n\n".join(parts)
             elif act == "fence_from_text":
+                step(f"🧩 语义构面：{intent.get('areas')} ∩ 方向界 → 片集合…")
                 name = intent.get("name") or "新围栏"
                 f = self.sess.fence_from_text(
                     name, intent.get("areas") or [], intent.get("bounds") or {})
@@ -92,6 +98,7 @@ class Copilot:
                 reply = (f"已按语义建围栏 **{f['name']}**（{f['km2']} km²，"
                          f"{len(f['pieces'])} 片）  \n人话：{' | '.join(f['terms'])}")
             elif act == "fence_from_terms":
+                step(f"🧩 条款回放：{len(intent.get('terms') or [])} 条 → 片集合…")
                 name = intent.get("name") or "条款围栏"
                 f = self.sess.fence_from_terms(name, intent.get("terms") or [])
                 focus = f["id"]
@@ -101,11 +108,24 @@ class Copilot:
                          + (" | ".join(f["terms"]) or "（无）"))
                 if skipped:
                     reply += f"  \n（界带条款已忽略：{'; '.join(skipped)}）"
+            elif act == "expand":
+                step(f"🧩 扩展相邻片（{intent.get('dir')}侧 → {intent.get('road')}）…")
+                f, added = self.sess.expand(intent.get("target", ""),
+                                            intent.get("dir", "west"),
+                                            intent.get("road", ""))
+                focus = f["id"]
+                dir_cn = {"west": "西", "east": "东",
+                          "south": "南", "north": "北"}[intent.get("dir", "west")]
+                reply = (f"**{f['name']}** 已向{dir_cn}扩展到「{intent.get('road')}」"
+                         f"：新增 {added} 片，现 {f['km2']} km² / "
+                         f"{len(f['pieces'])} 片  \n人话：{' | '.join(f['terms'])}")
             elif act == "clear":
+                step("🗑 移除围栏…")
                 tgt = (intent.get("target") or "").strip()
                 n = self.sess.clear(tgt or None)
                 reply = (f"已删除「{tgt}」。" if tgt else f"已清空全部 {n} 个围栏。")
             elif act == "split":
+                step(f"✂️ 沿「{intent.get('road')}」按片质心分堆（{intent.get('side')}侧）…")
                 f1, f2 = self.sess.split(intent.get("target", ""),
                                          intent.get("road", ""),
                                          intent.get("side", "west"))
@@ -117,6 +137,7 @@ class Copilot:
                          f"**{f1['name']}** {f1['km2']} km² ＋ "
                          f"**{f2['name']}** {f2['km2']} km²。确认后点「应用」。")
             elif act == "merge":
+                step(f"🔗 片并集合并 {len(tg or [])} 个围栏…")
                 tg = intent.get("targets") or []
                 fs = [self.sess.find(s) for s in tg]
                 removed = [dict(name=f["name"], id=f["id"]) for f in fs]
@@ -207,6 +228,26 @@ def make_handler(cp: Copilot, index_html: str):
             body = json.loads(self.rfile.read(n)) if n else {}
             if self.path == "/api/chat":
                 self._send(200, cp.chat(str(body.get("text", ""))))
+            elif self.path == "/api/chat/stream":
+                # SSE: 逐步推送处理过程，结束推 done
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                def emit(msg):
+                    try:
+                        self.wfile.write(f"data: {json.dumps({'type':'step','text':msg}, ensure_ascii=False)}\n\n".encode())
+                        self.wfile.flush()
+                    except Exception:  # noqa: BLE001
+                        pass
+                try:
+                    r = cp.chat(str(body.get("text", "")), emit=emit)
+                    self.wfile.write(f"data: {json.dumps({'type':'done', **r}, ensure_ascii=False)}\n\n".encode())
+                    self.wfile.flush()
+                except Exception as e:  # noqa: BLE001
+                    self.wfile.write(f"data: {json.dumps({'type':'done','reply':f'✗ {e}'}, ensure_ascii=False)}\n\n".encode())
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
             elif self.path == "/api/import":
                 try:
                     self._send(200, cp.import_geo(

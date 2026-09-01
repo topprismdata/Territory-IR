@@ -237,8 +237,7 @@ class Dataset:
                     a_ = nm.replace("至", "").split("—")[0] if "—" in nm else nm
                     inside = [x[0] for x in self.U if x[2] == a_]
                     if inside:
-                        bands.append(g.difference(
-                            ops.unary_union([self.U[k][0] for k in inside])))
+                        bands.append(g.difference(ops.unary_union(inside)))
         return S, bands
 
     # ---------- 贪心合成 ----------
@@ -373,7 +372,7 @@ class Dataset:
                     inside = [x[0] for x in self.U if x[2] == a]
                     if inside:
                         bands_g.append(g.difference(
-                            ops.unary_union([self.U[k][0] for k in inside])))
+                            ops.unary_union(inside)))
         full = (ops.unary_union([self.U[k][0] for k in S] + bands_g)
                 if (S or bands_g) else None)
         hterms = self.verbalize(chosen, zg)
