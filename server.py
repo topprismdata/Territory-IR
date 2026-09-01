@@ -60,17 +60,30 @@ class Copilot:
         reply, focus, pending = "", None, None
         try:
             if act == "describe":
-                tgt = intent.get("target") or ""
-                r = self.sess.describe(tgt) if tgt else {
-                    "fence": self.sess.pub(self.sess.fences[0]),
-                    "terms": self.sess.fences[0]["terms"],
-                    "j": None, "pieces": len(self.sess.fences[0]["pieces"] or [])}
-                f = r["fence"]
-                focus = f["id"]
-                reply = (f"**{f['name']}**（{f['km2']} km²，{f['pieces']} 片）"
-                         f"  \n人话：{' | '.join(f['terms'])}")
-                if r.get("j") is not None:
-                    reply += f"  \n复现 J = {r['j']}"
+                tgt = (intent.get("target") or "").strip()
+                ALL = ("所有围栏", "全部", "所有", "all", "")
+                if tgt and tgt not in ALL:
+                    try:
+                        targets = [self.sess.find(tgt)]
+                    except ValueError:
+                        targets = list(self.sess.fences)  # 目标对不上→描述全部
+                else:
+                    targets = list(self.sess.fences)
+                if not targets:
+                    reply = "当前没有围栏。先点「⇪ 导入围栏文件」或用文字建一个。"
+                else:
+                    for f in targets:
+                        self.sess.compile(f)   # 刷新 terms/engine_terms
+                    self.sess.save()
+                    parts = []
+                    for f in targets:
+                        parts.append("**" + f["name"] + "**（" + str(f["km2"])
+                                     + " km²，" + str(len(f["pieces"] or []))
+                                     + " 片）  \n人话："
+                                     + (" | ".join(f["terms"]) or "（无）")
+                                     + "  \n复现条款（粘贴可重建围栏）："
+                                     + " | ".join(f.get("engine_terms") or []))
+                    reply = "\n\n".join(parts)
             elif act == "fence_from_text":
                 name = intent.get("name") or "新围栏"
                 f = self.sess.fence_from_text(
@@ -78,6 +91,20 @@ class Copilot:
                 focus = f["id"]
                 reply = (f"已按语义建围栏 **{f['name']}**（{f['km2']} km²，"
                          f"{len(f['pieces'])} 片）  \n人话：{' | '.join(f['terms'])}")
+            elif act == "fence_from_terms":
+                name = intent.get("name") or "条款围栏"
+                f = self.sess.fence_from_terms(name, intent.get("terms") or [])
+                focus = f["id"]
+                skipped = f.pop("_skipped", [])
+                reply = (f"已按条款建围栏 **{f['name']}**（{f['km2']} km²，"
+                         f"{len(f['pieces'])} 片）  \n人话："
+                         + (" | ".join(f["terms"]) or "（无）"))
+                if skipped:
+                    reply += f"  \n（界带条款已忽略：{'; '.join(skipped)}）"
+            elif act == "clear":
+                tgt = (intent.get("target") or "").strip()
+                n = self.sess.clear(tgt or None)
+                reply = (f"已删除「{tgt}」。" if tgt else f"已清空全部 {n} 个围栏。")
             elif act == "split":
                 f1, f2 = self.sess.split(intent.get("target", ""),
                                          intent.get("road", ""),
@@ -104,6 +131,8 @@ class Copilot:
                          "「描述 @围栏」、「联和街道全域，北至广汕公路 建围栏」、"
                          "「沿花莞高速分开 西半边」、「把 A 和 B 合并」。")
         except Exception as e:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
             reply = f"✗ {e}"
         return {"reply": reply, "focus": focus, "pending": pending,
                 "state": self.state()}
@@ -157,6 +186,19 @@ def make_handler(cp: Copilot, index_html: str):
                 self._send(200, index_html, "text/html; charset=utf-8")
             elif self.path == "/api/state":
                 self._send(200, cp.state())
+            elif self.path.startswith("/static/"):
+                # web/ 目录静态文件（路径穿越防护）
+                name = Path(self.path[len("/static/"):]).name
+                f = WEB / name
+                if f.exists():
+                    ctype = ("application/javascript"
+                             if f.suffix == ".js" else
+                             "text/css" if f.suffix == ".css" else
+                             "image/x-icon" if f.suffix == ".ico" else
+                             "application/octet-stream")
+                    self._send(200, f.read_bytes(), ctype)
+                else:
+                    self._send(404, "not found", "text/plain")
             else:
                 self._send(404, {"error": "not found"})
 
@@ -175,6 +217,10 @@ def make_handler(cp: Copilot, index_html: str):
                 self._send(200, cp.apply())
             elif self.path == "/api/discard":
                 self._send(200, cp.discard())
+            elif self.path == "/api/clear":
+                n = cp.sess.clear(None)
+                self._send(200, {"reply": f"已清空全部 {n} 个围栏。",
+                                 "state": cp.state()})
             else:
                 self._send(404, {"error": "not found"})
     return H

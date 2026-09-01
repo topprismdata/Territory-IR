@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <title>TerritoryIR Copilot — 领地围栏对话工作台</title>
-<link rel="stylesheet" href="leaflet.css">
+<link rel="stylesheet" href="/static/leaflet.css">
 <style>
   * { box-sizing: border-box; margin: 0; }
   body { font: 13px/1.55 -apple-system, "PingFang SC", sans-serif;
@@ -84,6 +84,7 @@
       <button onclick="quick('联和街道全域，北至广汕公路，建一个围栏')">文字建围栏</button>
       <button onclick="quick('沿花莞高速把最新围栏分开，西半边')">沿路拆分</button>
       <button onclick="quick('把前两个围栏合并')">合并</button>
+      <button onclick="clearAll()" style="border-color:#ef9a9a;background:#ffebee;color:#c62828">🗑 清空地图</button>
     </div>
     <div style="margin-bottom:6px">
       <span id="upload" onclick="document.getElementById('file').click()">
@@ -97,7 +98,7 @@
   </div>
 </div>
 
-<script src="leaflet.js"></script>
+<script src="/static/leaflet.js"></script>
 <script>
 const map = L.map("map", {zoomSnap: 0.25}).setView([23.15, 113.40], 10);
 L.tileLayer("https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}",
@@ -196,6 +197,12 @@ async function discardP(){
   STATE = r.state; draw();
 }
 function quick(t){ el("inp").value = t; send(); }
+async function clearAll(){
+  if (!confirm("清空地图上所有围栏？")) return;
+  const r = await (await fetch("/api/clear", {method:"POST"})).json();
+  bubble("bot", r.reply);
+  STATE = r.state; draw();
+}
 
 el("file").addEventListener("change", async e => {
   const file = e.target.files[0]; if (!file) return;

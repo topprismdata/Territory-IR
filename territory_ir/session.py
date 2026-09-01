@@ -54,13 +54,17 @@ class Session:
     def find(self, name_substr):
         exact = [f for f in self.fences if f["name"] == name_substr]
         hits = [f for f in self.fences if name_substr in f["name"]]
-        if len(hits) > 1 and not exact:
-            raise ValueError(f"「{name_substr}」匹配到 {len(hits)} 个围栏，请用更完整的名字")
-        return exact[0] if exact else hits[0]
+        if exact:
+            return exact[0]
+        if len(hits) == 1:
+            return hits[0]
+        raise ValueError(f"「{name_substr}」匹配到 {len(hits)} 个围栏，请用更完整的名字")
 
     def public(self):
         return [{"id": f["id"], "name": f["name"], "rings": f["rings"],
-                 "km2": f["km2"], "terms": f["terms"], "pieces": len(f["pieces"] or []),
+                 "km2": f["km2"], "terms": f["terms"],
+                 "engine_terms": f.get("engine_terms", []),
+                 "pieces": len(f["pieces"] or []),
                  "color": f["color"]} for f in self.fences]
 
     @staticmethod
@@ -129,18 +133,21 @@ class Session:
              "rings": fence["rings"], "area_km2": fence["km2"]})
         fence["pieces"] = set(row["T"])
         fence["terms"] = row["human_terms"]
+        fence["engine_terms"] = row["engine_terms"]
         fence["j"] = row["engine_J"]
         return {"fence": self.pub(fence), "row": row}
 
     def describe(self, name_substr) -> dict:
         f = self.find(name_substr)
         row = self.compile(f)["row"]
+        self.save()   # 编译刷新（engine_terms 等）落盘
         return {"fence": self.pub(f), "terms": row["human_terms"],
                 "j": row["engine_J"], "pieces": len(row["T"])}
 
     def pub(self, fence) -> dict:
         return {"id": fence["id"], "name": fence["name"], "rings": fence["rings"],
                 "km2": fence["km2"], "terms": fence["terms"],
+                "engine_terms": fence.get("engine_terms", []),
                 "pieces": len(fence["pieces"] or []), "color": fence["color"]}
 
     # ---------- 2. 文字建围栏 ----------
@@ -160,6 +167,55 @@ class Session:
         fence["terms"] = row["human_terms"]
         self.fences.append(fence)
         self.save()
+        return fence
+
+    def fence_from_terms(self, name, terms) -> dict:
+        """条款（| 分隔）→ 片集合 → 围栏（确定性，无LLM）。
+
+        支持引擎格式：`新塘街道沿天顺路(限新塘街道内)`、`P#1473`、
+        `联和街道(限凤凰街道内)`；界带/东至类条款无独立片集，跳过。"""
+        import re as _re
+        clauses = []
+        skipped = []
+        for term in terms:
+            term = term.strip().strip("|").strip()
+            if not term:
+                continue
+            if "界带" in term or _re.match(r"^[东南西北]至", term):
+                skipped.append(term)
+                continue
+            m = _re.match(r"^P#(\d+)$", term)
+            if m:
+                clauses.append({"type": "pieces", "ids": [int(m.group(1))]})
+                continue
+            within = ""
+            mw = _re.search(r"\(限(.+?)内\)", term)
+            if mw:
+                within = mw.group(1)
+                term = term[:mw.start()].strip()
+            if "沿" in term:
+                st, road = [x.strip() for x in term.split("沿", 1)]
+                clauses.append({"type": "feat", "street": st,
+                                "feat": road, "within": within})
+            elif within and within != term:
+                clauses.append({"type": "slice", "street": term,
+                                "within": within})
+            else:
+                clauses.append({"type": "block", "street": term})
+        S = set()
+        for cl in clauses:
+            S |= self.ds.clause_pieces(cl)
+        if not S:
+            raise ValueError("条款未命中任何单元片（请核对街道/路名）")
+        geom = pieces_union(self.ds, S)
+        rings = self._rings_of(geom)
+        fence = {"id": uuid.uuid4().hex[:8], "name": name,
+                 "rings": rings, "pieces": S, "terms": terms,
+                 "km2": self._km2(self.ds, geom), "color": self._color()}
+        self.fences.append(fence)
+        self.save()
+        fence["_skipped"] = skipped
+        fence["_clauses"] = clauses
         return fence
 
     # ---------- 3. 沿路拆分 ----------
@@ -218,6 +274,18 @@ class Session:
         self.fences.append(merged)
         self.save()
         return merged
+
+    # ---------- 清空/删除 ----------
+    def clear(self, name_substr=None) -> int:
+        if name_substr:
+            f = self.find(name_substr)
+            self.fences.remove(f)
+            n = 1
+        else:
+            n = len(self.fences)
+            self.fences = []
+        self.save()
+        return n
 
     # ---------- GeoJSON 导出 ----------
     def to_geojson(self, fence) -> dict:

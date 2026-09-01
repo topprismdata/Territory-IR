@@ -87,9 +87,28 @@ def parse_intent(text: str, data_dir, fence_names: list) -> dict:
         '"road":"路名","side":"west|east|south|north"}\n'
         "  - side=用户**说到的**那一侧（\"西半边留给我\"→west）\n"
         '动作四 合并: {"action":"merge","targets":["围栏A子串","围栏B子串"]}\n'
+        '动作五 片条款建围栏: {"action":"fence_from_terms","name":"名","terms":["凤凰街道","新塘街道沿天顺路"]}\n'
+        '动作五 删除: {"action":"clear","target":"围栏名子串或空(空=全部)"}\n'
         '无法判断: {"action":"unknown","reason":"一句话"}\n\n'
         f"当前围栏清单:\n{names}\n\n用户指令: {text}"
     )
-    intent = extract_json(chat(prompt, data_dir))
+    # 确定性直通：粘贴人话（全角/半角 | 分隔）+ 生成围栏
+    norm = text.replace("｜", "|").replace("／", "|")
+    if "|" in norm:
+        terms = [x.strip() for x in norm.split("|") if x.strip()]
+        name = "条款围栏"
+        if terms and ("围栏" in terms[-1] or "生成" in terms[-1]):
+            cleaned = terms[-1].replace("生成围栏", "").replace("生成", "").strip()
+            terms = terms[:-1] + ([cleaned] if cleaned else [])
+            name = "条款围栏"
+        if terms:
+            return {"action": "fence_from_terms", "name": name, "terms": terms}
+
+    reply = ""
+    for _ in range(2):  # LLM 空回复重试一次
+        reply = chat(prompt, data_dir)
+        if reply.strip():
+            break
+    intent = extract_json(reply)
     intent.setdefault("action", "unknown")
     return intent
