@@ -99,6 +99,8 @@ def parse_intent(text: str, data_dir, fence_names: list) -> dict:
         '动作五 片条款建围栏: {"action":"fence_from_terms","name":"名","terms":["凤凰街道","新塘街道沿天顺路"]}\n'
         '动作六 扩展: {"action":"expand","target":"围栏名子串","dir":"west|east|south|north","road":"界路名"}\n'
         '动作七 走廊建围栏: {"action":"corridor","name":"名","roads":["广河高速","京港澳高速"],"km":3}\n'
+        '动作八 三路围合: {"action":"enclosed","name":"名","roads":["路A","路B","路C"]}\n'
+        "  - 用于「三条互相交叉的路围出一个区域」——roads 恰好 3 条\n"
         "  - 用于「沿X路、Y路（合成/围出）一个区域」——沿多条路沿线取走廊带\n"
         "  - 高速/国道/大道路名不是街道名，绝不要填进 areas\n"
         '  - 例：「把A向西扩展到华南快速」→ dir=west, road=华南快速\n'

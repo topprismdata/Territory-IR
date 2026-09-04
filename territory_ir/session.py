@@ -307,6 +307,66 @@ class Session:
         self.save()
         return fence
 
+    def enclosed_region(self, roads, name="三路围合") -> dict:
+        """N（=3）条互交道路围合区域：两两交点构成围合多边形，收编质心落内的片。
+
+        纯片归属：片原子不切割。"""
+        from itertools import combinations
+        from shapely.geometry import Point
+        if len(roads) != 3:
+            raise ValueError("围合区域当前支持 3 条互交道路")
+        lines = [self.road_line(r) for r in roads]
+        pair_pts = []
+        for i, j in combinations(range(3), 2):
+            inter = lines[i].intersection(lines[j])
+            pts = []
+
+            def _collect(g):
+                if g.is_empty:
+                    return
+                if g.geom_type == "Point":
+                    pts.append(g)
+                elif g.geom_type in ("MultiPoint", "GeometryCollection"):
+                    for gg in g.geoms:
+                        _collect(gg)
+                elif g.geom_type == "LineString":
+                    pts.extend([Point(g.coords[0]), Point(g.coords[-1])])
+
+            _collect(inter)
+            pair_pts.append(pts)
+
+        if not all(pair_pts):
+            raise ValueError("三路两两无交点（可能不相交），无法围合")
+
+        best = None
+        for pa in pair_pts[0]:
+            for pb in pair_pts[1]:
+                for pc in pair_pts[2]:
+                    dmax = max(pa.distance(pb), pb.distance(pc), pa.distance(pc))
+                    if best is None or dmax < best[0]:
+                        best = (dmax, pa, pb, pc)
+        dmax, pa, pb, pc = best
+        if dmax > 1.0:
+            raise ValueError(f"三路交点相距过远（{dmax*111:.0f}km），不构成同一围合区")
+
+        from shapely.geometry import Polygon as Pl
+        tri = Pl([pa, pb, pc, pa])
+        if not tri.is_valid:
+            tri = tri.buffer(0)
+        pieces = {k for k in range(len(self.ds.U))
+                  if tri.covers(self.ds.U[k][0].centroid)}
+        if not pieces:
+            raise ValueError("围合三角形内没有单元片")
+        geom = pieces_union(self.ds, pieces)
+        fence = {"id": uuid.uuid4().hex[:8], "name": name,
+                 "rings": self._rings_of(geom), "pieces": pieces,
+                 "clauses": [{"type": "pieces", "ids": sorted(pieces)}],
+                 "terms": self.describe_pieces(pieces),
+                 "km2": self._km2(self.ds, geom), "color": self._color()}
+        self.fences.append(fence)
+        self.save()
+        return fence, tri
+
     # ---------- 3. 沿路拆分 ----------
     def split(self, name_substr, road, side) -> tuple[dict, dict]:
         f = self.find(name_substr)

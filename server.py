@@ -177,6 +177,15 @@ class Copilot:
                 reply = (f"已沿「{'、'.join(intent.get('roads') or [])}」建围栏 "
                          f"**{f['name']}**（{f['km2']} km²，{f['pieces']} 片）  \n"
                          f"人话：{' | '.join(f['terms'])}")
+            elif act == "enclosed":
+                roads = intent.get("roads") or []
+                step(f"🧩 三路围合：两两交点 → 围合多边形 → 片集合…")
+                f, tri = self.sess.enclosed_region(roads, intent.get("name") or "三路围合")
+                focus = f["id"]
+                tri_pts = "、".join(f"({cx:.3f},{cy:.3f})" for cx, cy in tri.exterior.coords[:3])
+                reply = (f"已按「{'、'.join(roads)}」围合建区域 **{f['name']}**"
+                         f"（{f['km2']} km²，{f['pieces']} 片）  \n"
+                         f"围合三角顶点：{tri_pts}")
             elif act == "expand":
                 step(f"🧩 扩展相邻片（{intent.get('dir')}侧 → {intent.get('road')}）…")
                 f, added = self.sess.expand(intent.get("target", ""),
