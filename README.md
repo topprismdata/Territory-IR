@@ -103,6 +103,7 @@ west, east = split_pieces_by_road(ds, pieces, line, "west")
 - [docs/concepts.md](docs/concepts.md) —— 铺盖/真值片/条款词法/J 指标的设计原理
 - [docs/api.md](docs/api.md) —— 全量 API 签名与返回结构
 - [docs/data.md](docs/data.md) —— 数据格式、新城市接入清单、坐标系纪律
+- [docs/actions.md](docs/actions.md) —— 动作清单（业务审阅版）
 
 详细 API 见 [docs/api.md](docs/api.md)，概念与指标见
 [docs/concepts.md](docs/concepts.md)，数据接入见 [docs/data.md](docs/data.md)。
