@@ -94,26 +94,47 @@ def road_line_gcj(ds: Dataset, name: str):
 
 
 def split_pieces_by_road(ds: Dataset, pieces, line, side: str) -> tuple[set, set]:
-    """按路的方位把片集合分两堆（片原子，不切割几何）。
+    """按路的方位把片集合分两堆（片原子，不做几何切割）。
 
-    投影法：每片质心投影到路上取最近点与局部方向，点积判侧。"""
-    want = {"west": 0, "east": 0, "south": 0, "north": 0}[side]
+    每片取质心，找最近路段方向向量 d，法向统一指向 side 一侧，
+    dot(质心-最近点, n) > 0 即命中。"""
+    segs = (list(line.geoms) if line.geom_type in
+            ("MultiLineString", "MultiPolygon") else [line])
     chosen, other = set(), set()
-    L = max(line.length, 1e-9)
     for k in pieces:
         c = ds.U[k][0].centroid
-        d = min(max(line.project(c), 1e-6), L - 1e-6)
-        p0 = line.interpolate(d)
-        p1 = line.interpolate(max(d - 5e-4, 0))
-        p2 = line.interpolate(min(d + 5e-4, L))
-        dx, dy = p2.x - p1.x, p2.y - p1.y
-        Ln = (dx * dx + dy * dy) ** 0.5 or 1.0
-        nx, ny = -dy / Ln, dx / Ln
+        best_d = 1e18
+        best_p = None
+        best_dv = None
+        for seg in segs:
+            if seg.distance(c) >= best_d:
+                continue
+            coords = list(seg.coords)
+            for a, b in zip(coords, coords[1:]):
+                ax, ay = a
+                bx, by = b
+                ex, ey = bx - ax, by - ay
+                L2 = ex * ex + ey * ey
+                if L2 <= 0:
+                    continue
+                t = max(0.0, min(1.0, ((c.x - ax) * ex + (c.y - ay) * ey) / L2))
+                px, py = ax + t * ex, ay + t * ey
+                d2 = (c.x - px) ** 2 + (c.y - py) ** 2
+                if d2 < best_d:
+                    best_d = d2
+                    best_p = (px, py)
+                    best_dv = (ex, ey)
+        if best_p is None:
+            other.add(k)
+            continue
+        dx, dy = best_dv
+        L = (dx * dx + dy * dy) ** 0.5 or 1.0
+        nx, ny = -dy / L, dx / L
         if (side == "west" and nx > 0) or (side == "east" and nx < 0):
             nx, ny = -nx, -ny
         if (side == "south" and ny > 0) or (side == "north" and ny < 0):
             nx, ny = -nx, -ny
-        hit = (c.x - p0.x) * nx + (c.y - p0.y) * ny > 0
+        hit = (c.x - best_p[0]) * nx + (c.y - best_p[1]) * ny > 0
         (chosen if hit else other).add(k)
     return chosen, other
 

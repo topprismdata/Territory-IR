@@ -140,17 +140,19 @@ def parse_intent(text: str, data_dir, fence_names: list) -> dict:
         '动作五 片条款建围栏: {"action":"fence_from_terms","name":"名","terms":["凤凰街道","新塘街道沿天顺路"]}\n'
         '动作六 扩展: {"action":"expand","target":"围栏名子串","dir":"west|east|south|north","road":"界路名"}\n'
         '动作七 走廊建围栏: {"action":"corridor","name":"名","roads":["广河高速","京港澳高速"],"km":3}\n'
-        '动作八 三路围合: {"action":"enclosed","name":"名","roads":["路A","路B","路C"]}\n'
-        "  - 用于「三条互相交叉的路围出一个区域」——roads 恰好 3 条\n"
+        '动作八 多路围合: {"action":"enclosed","name":"名","roads":["路A","路B","路C","路D"]}\n'
+        "  - 用于「几条互相交叉的路围出一个区域」——roads 为 3-5 条互交道路\n"
         "  - 用于「沿X路、Y路（合成/围出）一个区域」——沿多条路沿线取走廊带\n"
         "  - 高速/国道/大道路名不是街道名，绝不要填进 areas\n"
         '  - 例：「把A向西扩展到华南快速」→ dir=west, road=华南快速\n'
         '动作五 删除: {"action":"clear","target":"围栏名子串或空(空=全部)"}\n'
-        "所有动作都可以带两个字段：\n"
+        "所有动作都可以带三个字段：\n"
         '  "understanding": "一句话自述你对该指令的理解"\n'
         '  "ambiguous": true/false —— 指令可合理对应多个不同动作时填 true，'
-        '并附 "candidates":[{"action":...,省略参数的关键差异说明},...]\n'
-        "  有歧义时不要硬猜，输出 ambiguous=true 让系统向用户澄清\n"
+        '并附 "candidates":[完整参数的候选意图 JSON（含该动作全部字段），'
+        '另加 "desc":"一句话差异说明"]\n'
+        "  有歧义时不要硬猜，输出 ambiguous=true 让系统向用户澄清；"
+        "无歧义时填 false 并直接给最终解析\n"
         "参考案例（历史纠正沉淀，优先类比这些解析）:\n" + cases_txt + "\n\n"
         f"当前围栏清单:\n{names}\n\n用户指令: {text}"
     )

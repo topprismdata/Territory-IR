@@ -95,43 +95,59 @@ class Copilot:
         return {"fences": self.sess.public(), "pending": self._pending_public()}
 
     def _pending_public(self):
-        if not self.pending:
+        p = getattr(self.sess, "pending", None)
+        if not p:
             return None
-        p = self.pending
-        result = ([self.sess.pub(f) for f in p["result"]]
-                  if p.get("result") else [])
-        removed = ([f["name"] for f in p["removed"]]
-                   if p.get("removed") and isinstance(p["removed"][0], dict)
-                   else p.get("removed", []))
-        return {"kind": p["kind"], "desc": p["desc"], "result": result,
-                "removed": removed}
+        if p["kind"] == "split":
+            return {"kind": "split",
+                    "result": [self.sess.pub(f) for f in p["children"]],
+                    "removed": [p["parent"]]}
+        return {"kind": "merge",
+                "result": [self.sess.pub(p["merged"])],
+                "removed": p["parents"]}
 
     def chat(self, text: str, emit=None) -> dict:
         step = (lambda msg: emit(msg)) if emit else (lambda msg: None)
         step(f"收到指令：「{text[:40]}{'…' if len(text) > 40 else ''}」")
-        fast = _fast_intent(text)
-        if fast is not None:
-            step("⚡ 规则直通（跳过 LLM）")
-            intent = fast
-        else:
-            step("🧠 LLM 解析意图…")
-        if fast is None:
-            intent = tir_llm.parse_intent(
-                text, str(self.ds.data_dir),
-                {"fence_names": [f["name"] for f in self.sess.fences]})
+        intent = None
+
+        # 澄清应答：用户回复编号 → 执行对应候选（上下文保持）
+        import re as _re2
+        m = _re2.fullmatch(r"([0-9]+)(?:[.、)）]\\s*.*)?", text.strip())
+        if m and self._clarify_intents:
+            idx = int(m.group(1)) - 1
+            if 0 <= idx < len(self._clarify_intents):
+                intent = dict(self._clarify_intents[idx])
+                self._clarify_intents = []
+                step(f"✓ 已选择候选 {idx+1}：{intent['action']}")
+            else:
+                self._clarify_intents = []
+                raise ValueError(f"编号 {idx+1} 超出候选范围，请重新描述指令")
+
+        if intent is None:
+            fast = _fast_intent(text)
+            if fast is not None:
+                step("⚡ 规则直通（跳过 LLM）")
+                intent = fast
+            else:
+                step("🧠 LLM 解析意图…")
+                intent = tir_llm.parse_intent(
+                    text, str(self.ds.data_dir),
+                    {"fence_names": [f["name"] for f in self.sess.fences]})
+
         act = intent["action"]
         step(f"📋 意图 = {act}")
         reply, focus, pending = "", None, None
         if intent.get("ambiguous") and intent.get("candidates"):
             # 选择性澄清（CLAM 模式）：有歧义先问，不硬猜
             cands = intent["candidates"]
+            self._clarify_intents = cands
             lines = [f"{i+1}. {c.get('desc') or c.get('action')}"
                      for i, c in enumerate(cands)]
             und = intent.get("understanding") or ""
-            reply = ("这条指令有歧义，先确认你的意思：\n"
+            reply = ("这条指令有歧义，先确认你的意思（回复编号即可）：\n"
                      + "\n".join(lines)
-                     + (f"\n\n（我的理解：{und}）" if und else "")
-                     + "\n\n回复编号或完整描述即可。")
+                     + (f"\n\n（我的理解：{und}）" if und else ""))
             step("❓ 检测到歧义，已向用户澄清")
             return {"reply": reply, "focus": None, "pending": None,
                     "state": self.state(), "clarify": lines}
@@ -217,11 +233,9 @@ class Copilot:
                 reply = (f"已删除「{tgt}」。" if tgt else f"已清空全部 {n} 个围栏。")
             elif act == "split":
                 step(f"✂️ 沿「{intent.get('road')}」按片质心分堆（{intent.get('side')}侧）…")
-                f1, f2 = self.sess.split(intent.get("target", ""),
-                                         intent.get("road", ""),
-                                         intent.get("side", "west"))
-                self.pending = {"kind": "split", "result": [f1, f2],
-                                "removed": [], "desc": intent.get("road", "")}
+                f1, f2 = self.sess.split_preview(intent.get("target", ""),
+                                                 intent.get("road", ""),
+                                                 intent.get("side"))
                 pending = self._pending_public()
                 focus = f1["id"]
                 reply = (f"沿「{intent.get('road')}」切分预览："
@@ -229,15 +243,12 @@ class Copilot:
                          f"**{f2['name']}** {f2['km2']} km²。确认后点「应用」。")
             elif act == "merge":
                 tg = intent.get("targets") or []
-                step(f"🔗 片并集合并 {len(tg)} 个围栏…")
-                fs = [self.sess.find(s) for s in tg]
-                removed = [dict(name=f["name"], id=f["id"]) for f in fs]
-                self.pending = {"kind": "merge", "result": None,
-                                "removed": [f["name"] for f in fs],
-                                "desc": "+".join(f["name"] for f in fs)}
+                step(f"🔗 合并 {len(tg)} 个围栏…")
+                merged = self.sess.merge_preview(tg)
                 pending = self._pending_public()
-                reply = (f"合并预览：{' ＋ '.join(f['name'] for f in fs)}"
-                         f"（{len(fs)} 个围栏）。确认后点「应用」。")
+                focus = merged["id"]
+                reply = (f"合并预览：{' ＋ '.join(tg)}"
+                         f"（{len(tg)} 个围栏）。确认后点「应用」。")
             else:
                 reply = ("没理解这个指令。可以试试：导入围栏、"
                          "「描述 @围栏」、「联和街道全域，北至广汕公路 建围栏」、"
@@ -250,16 +261,15 @@ class Copilot:
                 "state": self.state()}
 
     def apply(self):
-        if not self.pending:
+        p = getattr(self.sess, "pending", None)
+        if not p:
             return {"reply": "没有待应用的预览。"}
-        p = self.pending
         if p["kind"] == "split":
-            self.sess.fences += p["result"]
+            self.sess.split_commit()
         else:
-            merged = self.sess.merge(p["removed"])  # removed 存的是名字
-            p["result"] = [merged]
-        self.sess.save()
-        names = "、".join(f["name"] for f in p["result"])
+            self.sess.merge_commit()
+        names = "、".join(f["name"] for f in p["children"]) \
+            if p["kind"] == "split" else p["merged"]["name"]
         self.pending = None
         return {"reply": f"已应用：{names}", "state": self.state()}
 

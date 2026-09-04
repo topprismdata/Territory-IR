@@ -65,6 +65,12 @@ class Session:
                 return f
         raise KeyError(fid)
 
+    def find_exact(self, name: str):
+        hits = [f for f in self.fences if f["name"] == name]
+        if len(hits) != 1:
+            raise ValueError(f"精确名「{name}」匹配到 {len(hits)} 个围栏")
+        return hits[0]
+
     def find(self, name_substr):
         exact = [f for f in self.fences if f["name"] == name_substr]
         hits = [f for f in self.fences if name_substr in f["name"]]
@@ -368,14 +374,15 @@ class Session:
         return fence, tri
 
     # ---------- 3. 沿路拆分 ----------
-    def split(self, name_substr, road, side) -> tuple[dict, dict]:
+    def split_preview(self, name_substr, road, side=None) -> dict:
+        """预览沿路切分（零副作用）：片分堆出两个子围栏，存入 pending。"""
+        side = side or "north"
         f = self.find(name_substr)
         if not f["pieces"]:
             raise ValueError(f"「{f['name']}」不在单元库覆盖内（无片），无法按片拆分")
-        line = road_line_gcj(self.ds, road)
+        line = self.road_line(road)
         chosen, other = split_pieces_by_road(self.ds, f["pieces"], line, side)
         if not chosen or not other:
-            # 建议：真正能把片分成两侧（且每侧≥20%）的路段
             fp = Polygon(f["rings"][0])
             if not fp.is_valid:
                 fp = fp.buffer(0)
@@ -393,7 +400,6 @@ class Session:
             hint = ("；该围栏可被这些路切分："
                     + "、".join(sorted(good)[:6])) if good else ""
             raise ValueError(f"「{road}」分不开这个围栏（整块在一侧）{hint}")
-        self.fences.remove(f)
         side_cn = {"west": "西", "east": "东", "south": "南", "north": "北"}[side]
         g1 = pieces_union(self.ds, chosen)
         g2 = pieces_union(self.ds, other)
@@ -403,25 +409,146 @@ class Session:
         f2 = {"id": uuid.uuid4().hex[:8], "name": f["name"],
               "rings": self._rings_of(g2), "pieces": other, "terms": f["terms"],
               "km2": self._km2(self.ds, g2), "color": self._color()}
-        def clauses_for(pieces):
-            """父条款按片归属分家：全在 → 原样继承；跨界 → pieces 精确保真。"""
-            out = []
-            for cl in f.get("clauses", []):
-                pc = self.ds.clause_pieces(cl) & f["pieces"]
-                inside = pc & pieces
-                if not inside:
-                    continue
-                out.append(cl if pc <= pieces
-                           else {"type": "pieces", "ids": sorted(inside)})
-            return out
-        f1["clauses"] = clauses_for(chosen)
-        f2["clauses"] = clauses_for(other)
-        f1["terms"] = self.describe_pieces(chosen)
-        f2["terms"] = self.describe_pieces(other)
-        self.fences += [f1, f2]
-        self.save()
+        for nf in (f1, f2):
+            nf["terms"] = self.describe_pieces(nf["pieces"])
+        self.pending = {"kind": "split", "parent": f["name"],
+                        "children": [f1, f2]}
         return f1, f2
 
+    def split_commit(self) -> None:
+        """切分预览落地：移除父围栏，加入两个子围栏。"""
+        p = self.pending
+        if not p or p["kind"] != "split":
+            return
+        parent = self.find_exact(p["parent"])
+        if parent in self.fences:
+            self.fences.remove(parent)
+        self.fences += p["children"]
+        self.pending = None
+        self.save()
+
+    # ---------- 4. 合并 ----------
+    def merge_preview(self, name_substrings) -> dict:
+        """预览合并（零副作用）。"""
+        fs = [self.find(s) for s in name_substrings]
+        if len(fs) < 2:
+            raise ValueError("合并至少需要两个围栏")
+        pieces = set()
+        for f in fs:
+            pieces |= (f["pieces"] or set())
+        if pieces:
+            geom = pieces_union(self.ds, pieces)
+        else:
+            geom = unary_union([Polygon(f["rings"][0]) for f in fs])
+            if geom.geom_type == "MultiPolygon":
+                geom = max(geom.geoms, key=lambda g: g.area)
+        merged = {"id": uuid.uuid4().hex[:8],
+                  "name": "+".join(f["name"] for f in fs)[:24],
+                  "rings": self._rings_of(geom), "pieces": pieces,
+                  "clauses": [cl for f in fs for cl in f.get("clauses", [])],
+                  "terms": self.describe_pieces(pieces),
+                  "km2": self._km2(self.ds, geom),
+                  "color": fs[0]["color"]}
+        self.pending = {"kind": "merge", "parents": [f["name"] for f in fs],
+                        "merged": merged}
+        return merged
+
+    def merge_commit(self) -> None:
+        p = self.pending
+        if not p or p["kind"] != "merge":
+            return
+        for nm in p["parents"]:
+            f = self.find_exact(nm)
+            if f in self.fences:
+                self.fences.remove(f)
+        self.fences.append(p["merged"])
+        self.pending = None
+        self.save()
+
+    # ---------- 清空/删除 ----------
+    def clear(self, name_substr=None) -> int:
+        if name_substr:
+            f = self.find(name_substr)
+            self.fences.remove(f)
+            n = 1
+        else:
+            n = len(self.fences)
+            self.fences = []
+        self.save()
+        return n
+
+    # ---------- GeoJSON 导出 ----------
+    def to_geojson(self, fence) -> dict:
+        polys = ([{"type": "Polygon", "coordinates": [r]} for r in fence["rings"]])
+        feats = [{"type": "Feature",
+                  "properties": {"name": fence["name"], "km2": fence["km2"]},
+                  "geometry": p} for p in polys]
+        return {"type": "FeatureCollection", "features": feats}
+    # ---------- 4. 合并 ----------
+    def merge(self, name_substrings) -> dict:
+        fs = [self.find(s) for s in name_substrings]
+        if len(fs) < 2:
+            raise ValueError("合并至少需要两个围栏")
+        pieces = set()
+        for f in fs:
+            pieces |= (f["pieces"] or set())
+        if pieces:
+            geom = pieces_union(self.ds, pieces)
+        else:
+            geom = unary_union([Polygon(f["rings"][0]) for f in fs])
+            if geom.geom_type == "MultiPolygon":
+                geom = max(geom.geoms, key=lambda g: g.area)
+        for f in fs:
+            self.fences.remove(f)
+        merged = {"id": uuid.uuid4().hex[:8],
+                  "name": "+".join(f["name"] for f in fs)[:24],
+                  "rings": self._rings_of(geom), "pieces": pieces,
+                  "clauses": [cl for f in fs for cl in f.get("clauses", [])],
+                  "terms": self.describe_pieces(pieces),
+                  "km2": self._km2(self.ds, geom),
+                  "color": fs[0]["color"]}
+        self.fences.append(merged)
+        self.save()
+        return merged
+
+    # ---------- 清空/删除 ----------
+    def clear(self, name_substr=None) -> int:
+        if name_substr:
+            f = self.find(name_substr)
+            self.fences.remove(f)
+            n = 1
+        else:
+            n = len(self.fences)
+            self.fences = []
+        self.save()
+        return n
+
+    # ---------- GeoJSON 导出 ----------
+    def to_geojson(self, fence) -> dict:
+        polys = ([{"type": "Polygon", "coordinates": [r]} for r in fence["rings"]])
+        feats = [{"type": "Feature",
+                  "properties": {"name": fence["name"], "km2": fence["km2"]},
+                  "geometry": p} for p in polys]
+        return {"type": "FeatureCollection", "features": feats}
+    # ---------- 清空/删除 ----------
+    def clear(self, name_substr=None) -> int:
+        if name_substr:
+            f = self.find(name_substr)
+            self.fences.remove(f)
+            n = 1
+        else:
+            n = len(self.fences)
+            self.fences = []
+        self.save()
+        return n
+
+    # ---------- GeoJSON 导出 ----------
+    def to_geojson(self, fence) -> dict:
+        polys = ([{"type": "Polygon", "coordinates": [r]} for r in fence["rings"]])
+        feats = [{"type": "Feature",
+                  "properties": {"name": fence["name"], "km2": fence["km2"]},
+                  "geometry": p} for p in polys]
+        return {"type": "FeatureCollection", "features": feats}
     # ---------- 4. 合并 ----------
     def merge(self, name_substrings) -> dict:
         fs = [self.find(s) for s in name_substrings]
