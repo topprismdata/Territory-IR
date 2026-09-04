@@ -313,20 +313,19 @@ class Session:
         self.save()
         return fence
 
-    def enclosed_region(self, roads, name="三路围合") -> dict:
-        """N（=3）条互交道路围合区域：两两交点构成围合多边形，收编质心落内的片。
+    def enclosed_region(self, roads, name="多路围合") -> dict:
+        """N（3-5）条互交道路围合区域：两两交点聚类 → 凸包 → 质心落内的片。
 
-        纯片归属：片原子不切割。"""
+        ★ 纯片归属：片原子不切割。"""
         from itertools import combinations
-        from shapely.geometry import Point
-        if len(roads) != 3:
-            raise ValueError("围合区域当前支持 3 条互交道路")
+        from shapely.geometry import Point, MultiPoint
+        if not 3 <= len(roads) <= 5:
+            raise ValueError("围合区域支持 3-5 条互交道路")
         lines = [self.road_line(r) for r in roads]
         pair_pts = []
-        for i, j in combinations(range(3), 2):
+        for i, j in combinations(range(len(lines)), 2):
             inter = lines[i].intersection(lines[j])
             pts = []
-
             def _collect(g):
                 if g.is_empty:
                     return
@@ -337,32 +336,23 @@ class Session:
                         _collect(gg)
                 elif g.geom_type == "LineString":
                     pts.extend([Point(g.coords[0]), Point(g.coords[-1])])
-
             _collect(inter)
             pair_pts.append(pts)
-
-        if not all(pair_pts):
-            raise ValueError("三路两两无交点（可能不相交），无法围合")
-
-        best = None
-        for pa in pair_pts[0]:
-            for pb in pair_pts[1]:
-                for pc in pair_pts[2]:
-                    dmax = max(pa.distance(pb), pb.distance(pc), pa.distance(pc))
-                    if best is None or dmax < best[0]:
-                        best = (dmax, pa, pb, pc)
-        dmax, pa, pb, pc = best
-        if dmax > 1.0:
-            raise ValueError(f"三路交点相距过远（{dmax*111:.0f}km），不构成同一围合区")
-
-        from shapely.geometry import Polygon as Pl
-        tri = Pl([pa, pb, pc, pa])
-        if not tri.is_valid:
-            tri = tri.buffer(0)
+        all_pts = [p for pts in pair_pts for p in pts]
+        if len(all_pts) < 3:
+            raise ValueError("道路交点不足，无法围合")
+        import statistics
+        cx = statistics.median(p.x for p in all_pts)
+        cy = statistics.median(p.y for p in all_pts)
+        ordered = sorted(all_pts, key=lambda p: (p.x - cx) ** 2 + (p.y - cy) ** 2)
+        near = [p for p in ordered if p.distance(ordered[0]) <= 0.30] or ordered[:3]
+        hull = MultiPoint(near).convex_hull
+        if hull.geom_type != "Polygon" or hull.area < 1e-6:
+            raise ValueError("交点无法构成围合区域（近似共线？）")
         pieces = {k for k in range(len(self.ds.U))
-                  if tri.covers(self.ds.U[k][0].centroid)}
+                  if hull.covers(self.ds.U[k][0].centroid)}
         if not pieces:
-            raise ValueError("围合三角形内没有单元片")
+            raise ValueError("围合区域内没有单元片")
         geom = pieces_union(self.ds, pieces)
         fence = {"id": uuid.uuid4().hex[:8], "name": name,
                  "rings": self._rings_of(geom), "pieces": pieces,
@@ -371,7 +361,7 @@ class Session:
                  "km2": self._km2(self.ds, geom), "color": self._color()}
         self.fences.append(fence)
         self.save()
-        return fence, tri
+        return fence, hull
 
     # ---------- 3. 沿路拆分 ----------
     def split_preview(self, name_substr, road, side=None) -> dict:
