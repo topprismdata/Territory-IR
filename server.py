@@ -122,6 +122,19 @@ class Copilot:
         act = intent["action"]
         step(f"📋 意图 = {act}")
         reply, focus, pending = "", None, None
+        if intent.get("ambiguous") and intent.get("candidates"):
+            # 选择性澄清（CLAM 模式）：有歧义先问，不硬猜
+            cands = intent["candidates"]
+            lines = [f"{i+1}. {c.get('desc') or c.get('action')}"
+                     for i, c in enumerate(cands)]
+            und = intent.get("understanding") or ""
+            reply = ("这条指令有歧义，先确认你的意思：\n"
+                     + "\n".join(lines)
+                     + (f"\n\n（我的理解：{und}）" if und else "")
+                     + "\n\n回复编号或完整描述即可。")
+            step("❓ 检测到歧义，已向用户澄清")
+            return {"reply": reply, "focus": None, "pending": None,
+                    "state": self.state(), "clarify": lines}
         try:
             if act == "describe":
                 step("📖 编译围栏 → 真值片 + 条款回放…")
@@ -336,6 +349,15 @@ def make_handler(cp: Copilot, index_html: str):
                 self._send(200, cp.apply())
             elif self.path == "/api/discard":
                 self._send(200, cp.discard())
+            elif self.path == "/api/intent_feedback":
+                case = {"text": str(body.get("text", "")),
+                        "action": str(body.get("action", "")),
+                        "params": body.get("params") or {},
+                        "note": str(body.get("note", "用户纠正"))}
+                import territory_ir.llm as _l
+                _l.retain_case(case)
+                self._send(200, {"ok": True})
+                return
             elif self.path == "/api/clear":
                 n = cp.sess.clear(None)
                 self._send(200, {"reply": f"已清空全部 {n} 个围栏。",

@@ -14,6 +14,43 @@ from pathlib import Path
 
 
 _DEFAULT_CONF = Path.home() / ".claude" / "settings.json"
+_CASES_PATH = Path(__file__).resolve().parent / "intent_cases.json"
+_cases_cache = None
+
+
+def load_cases() -> list:
+    """CBR 案例库（Retain 环节的产物）。"""
+    global _cases_cache
+    if _cases_cache is None:
+        if _CASES_PATH.exists():
+            _cases_cache = json.loads(_CASES_PATH.read_text(encoding="utf-8"))
+        else:
+            _cases_cache = []
+    return _cases_cache
+
+
+def retain_case(case: dict) -> None:
+    """用户纠正后沉淀新案例（Retain）。"""
+    global _cases_cache
+    cases = load_cases()
+    cases.append(case)
+    _cases_cache = cases
+    _CASES_PATH.write_text(
+        json.dumps(cases, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _norm_text(s: str) -> str:
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(s).lower())
+
+
+def similar_cases(text: str, k: int = 3) -> list:
+    """语义相似度 top-k 案例选择（difflib，案例量大后可换向量检索）。"""
+    import difflib
+    norm = _norm_text(text)
+    ranked = sorted(load_cases(),
+                    key=lambda c: -difflib.SequenceMatcher(
+                        None, norm, _norm_text(c["text"])).ratio())
+    return ranked[:k]
 
 
 def load_config(data_dir) -> dict:
@@ -84,6 +121,10 @@ def parse_intent(text: str, data_dir, fence_names: list) -> dict:
     """
     text = text.replace("@", "")
     names = "\n".join(fence_names) or "（暂无）"
+    cases = similar_cases(text, 3)
+    cases_txt = "\n".join(
+        f'  用户：「{c["text"]}」\n  正确解析: {json.dumps({"action": c["action"], **c.get("params", {})}, ensure_ascii=False)}'
+        for c in cases)
     prompt = (
         "你是领地围栏助手。把用户指令解析为 JSON，只输出 JSON。\n"
         '动作一 描述围栏: {"action":"describe","target":"围栏名子串"}\n'
@@ -105,7 +146,12 @@ def parse_intent(text: str, data_dir, fence_names: list) -> dict:
         "  - 高速/国道/大道路名不是街道名，绝不要填进 areas\n"
         '  - 例：「把A向西扩展到华南快速」→ dir=west, road=华南快速\n'
         '动作五 删除: {"action":"clear","target":"围栏名子串或空(空=全部)"}\n'
-        '无法判断: {"action":"unknown","reason":"一句话"}\n\n'
+        "所有动作都可以带两个字段：\n"
+        '  "understanding": "一句话自述你对该指令的理解"\n'
+        '  "ambiguous": true/false —— 指令可合理对应多个不同动作时填 true，'
+        '并附 "candidates":[{"action":...,省略参数的关键差异说明},...]\n'
+        "  有歧义时不要硬猜，输出 ambiguous=true 让系统向用户澄清\n"
+        "参考案例（历史纠正沉淀，优先类比这些解析）:\n" + cases_txt + "\n\n"
         f"当前围栏清单:\n{names}\n\n用户指令: {text}"
     )
     # 确定性直通：粘贴人话（| ; ； ｜ ／ 任一分隔）+ 生成围栏
