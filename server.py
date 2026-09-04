@@ -168,6 +168,15 @@ class Copilot:
                          + (" | ".join(f["terms"]) or "（无）"))
                 if skipped:
                     reply += f"  \n（界带条款已忽略：{'; '.join(skipped)}）"
+            elif act == "corridor":
+                step(f"🧩 沿路走廊带（{intent.get('km', 3)}km）→ 片集合…")
+                f = self.sess.corridor(intent.get("roads") or [],
+                                       float(intent.get("km", 3)),
+                                       intent.get("name") or "走廊围栏")
+                focus = f["id"]
+                reply = (f"已沿「{'、'.join(intent.get('roads') or [])}」建围栏 "
+                         f"**{f['name']}**（{f['km2']} km²，{f['pieces']} 片）  \n"
+                         f"人话：{' | '.join(f['terms'])}")
             elif act == "expand":
                 step(f"🧩 扩展相邻片（{intent.get('dir')}侧 → {intent.get('road')}）…")
                 f, added = self.sess.expand(intent.get("target", ""),

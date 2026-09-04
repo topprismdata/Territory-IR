@@ -46,6 +46,15 @@ class Session:
                             "clauses": r.get("clauses", [])}
                            for r in rows]
 
+    _line_cache: dict = {}
+
+    def road_line(self, road):
+        """路折线（GCJ，进程级缓存）。"""
+        if road not in self._line_cache:
+            from territory_ir.semantics import road_line_gcj
+            self._line_cache[road] = road_line_gcj(self.ds, road)
+        return self._line_cache[road]
+
     # ---------- 基础 ----------
     def _color(self):
         return PALETTE[len(self.fences) % len(PALETTE)]
@@ -231,6 +240,9 @@ class Session:
         S = set()
         for cl in clauses:
             S |= self.ds.clause_pieces(cl)
+        if not S and all(_re.search(r"(高速|公路|大道|快速|国道|省道)", term) for term in terms):
+            # 道路名走廊兜底：沿路取 3km 走廊带
+            return self.corridor([_re.sub(r"\(限.+?内\)", "", tm).strip() for tm in terms], 3.0, name)
         if not S:
             raise ValueError("条款未命中任何单元片（请核对街道/路名）")
         geom = pieces_union(self.ds, S)
@@ -270,6 +282,30 @@ class Session:
         f["terms"] = self.describe_pieces(f["pieces"])
         self.save()
         return f, len(added)
+
+    def corridor(self, roads, km=3.0, name="走廊围栏") -> dict:
+        """沿多条路取走廊带内的片 → 建围栏（片归属变更语义同导入）。"""
+        from shapely.geometry import Point
+        from shapely.ops import unary_union as _uu
+        buf_deg = km / 111.0
+        bands = []
+        for rd in roads:
+            line = self.road_line(rd)
+            bands.append(line.buffer(buf_deg))
+        band = _uu(bands)
+        pieces = {k for k in range(len(self.ds.U))
+                  if band.covers(self.ds.U[k][0].centroid)}
+        if not pieces:
+            raise ValueError(f"这些路（{'、'.join(roads)}）周边 {km}km 内没有单元片")
+        geom = pieces_union(self.ds, pieces)
+        fence = {"id": uuid.uuid4().hex[:8], "name": name,
+                 "rings": self._rings_of(geom), "pieces": pieces,
+                 "clauses": [{"type": "pieces", "ids": sorted(pieces)}],
+                 "terms": self.describe_pieces(pieces),
+                 "km2": self._km2(self.ds, geom), "color": self._color()}
+        self.fences.append(fence)
+        self.save()
+        return fence
 
     # ---------- 3. 沿路拆分 ----------
     def split(self, name_substr, road, side) -> tuple[dict, dict]:
