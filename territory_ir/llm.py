@@ -54,7 +54,12 @@ def similar_cases(text: str, k: int = 3) -> list:
 
 
 def load_config(data_dir) -> dict:
-    """配置优先级：$TIR_LLM_CONFIG → <data_dir>/llm_config.json → ~/.claude/settings.json"""
+    """配置优先级：$TIR_LLM_CONFIG → <data_dir>/llm_config.json → ~/.claude/settings.json
+
+    返回字段:
+    - url / key / model: 必填
+    - api: 'anthropic' (默认) 或 'openai' (omlx / vLLM / OpenAI 兼容)
+    """
     p = os.environ.get("TIR_LLM_CONFIG")
     candidates = ([Path(p)] if p else
                   [_DEFAULT_CONF, Path(data_dir) / "llm_config.json"])
@@ -65,9 +70,13 @@ def load_config(data_dir) -> dict:
                 env = raw["env"]
                 return {"url": env["ANTHROPIC_BASE_URL"].rstrip("/"),
                         "key": env["ANTHROPIC_AUTH_TOKEN"],
-                        "model": os.environ.get("TIR_LLM_MODEL", "MiniMax-M3")}
-            return {"url": raw["url"].rstrip("/"),
-                    "key": raw["key"], "model": raw["model"]}
+                        "model": os.environ.get("TIR_LLM_MODEL", "MiniMax-M3"),
+                        "api": "anthropic"}
+            # 透传所有字段, 保留用户自定义的 api / timeout 等
+            out = {"url": raw["url"].rstrip("/"),
+                   "key": raw["key"], "model": raw["model"],
+                   "api": raw.get("api", "anthropic")}
+            return out
     raise FileNotFoundError(f"LLM 配置不存在: {[str(c) for c in candidates]}")
 
 
@@ -87,6 +96,19 @@ def _open(req, timeout):
 
 def chat(prompt: str, data_dir, timeout: int = 90) -> str:
     cfg = load_config(data_dir)
+    api = cfg.get("api", "anthropic")
+    if api == "openai":
+        # OpenAI Chat Completions 格式 (omlx / vLLM / OpenAI 兼容 API)
+        req = urllib.request.Request(
+            cfg["url"] + "/chat/completions",
+            data=json.dumps({
+                "model": cfg["model"], "max_tokens": 2048,
+                "messages": [{"role": "user", "content": prompt}]}).encode(),
+            headers={"Content-Type": "application/json",
+                     "Authorization": "Bearer " + cfg["key"]})
+        r = json.load(_open(req, timeout))
+        return r["choices"][0]["message"]["content"].strip()
+    # 默认 Anthropic Messages API (Claude / Anthropic 兼容)
     req = urllib.request.Request(
         cfg["url"] + "/v1/messages",
         data=json.dumps({"model": cfg["model"], "max_tokens": 2048,
@@ -112,8 +134,6 @@ def extract_json(text: str) -> dict:
         if not m2:
             raise ValueError(f"LLM 未返回 JSON: {text[:120]}")
         return json.loads(m2.group(0))
-
-
 def parse_intent(text: str, data_dir, fence_names: list) -> dict:
     """自然语言 → 动作意图。
 
