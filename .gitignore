@@ -9,3 +9,6 @@ geojson/
 sessions/
 territory_ir_dataset.json
 llm_config.json
+.coverage
+_omlx_test_config.json
+test_tir_minimal.py

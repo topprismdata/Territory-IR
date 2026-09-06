@@ -25,6 +25,8 @@ def _to(x: float, y: float) -> float:
 
 
 def wgs2gcj(lon: float, lat: float) -> tuple[float, float]:
+    if out_of_china(lon, lat):
+        return lon, lat
     rl = lat / 180.0 * PI
     magic = 1.0 - EE * math.sin(rl) ** 2
     sm = math.sqrt(magic)
