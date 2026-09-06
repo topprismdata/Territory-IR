@@ -49,7 +49,7 @@ class TestDatasetConstruction:
 
 
 class TestCompileFence:
-    """合成围栏(右上+右下)的编译应产出 J=1.0"""
+    """合成围栏A(右上象限)的编译应产出 J=1.0"""
 
     def test_compile_returns_valid_row(self, ds):
         fence = ds.reg["fences"][0]
@@ -65,11 +65,11 @@ class TestCompileFence:
         assert row["engine_J"] == 1.0, f"合成数据 J 应=1.0, 实际={row['engine_J']}"
 
     def test_truth_pieces_subset(self, ds):
-        """真值片应是右上+右下,对应街道A(上)+ 街道B(下)各 1 片"""
+        """围栏A 覆盖右上象限,完整包含的父地块仅右上 1 片"""
         fence = ds.reg["fences"][0]
         row = ds.compile_fence(fence)
         T = set(row["T"])
-        assert len(T) == 2, f"真值片应=2, 实际={len(T)}"
+        assert len(T) == 1, f"真值片应=1(右上), 实际={len(T)}"
 
     def test_replay_matches_truth(self, ds):
         """S 应等于 T(完美回放)"""
@@ -90,3 +90,22 @@ class TestClauseVocabulary:
         clause = {"type": "pieces", "ids": [0, 1]}
         pieces = ds.clause_pieces(clause)
         assert pieces == {0, 1}
+
+
+class TestSyntheticRoadsAndFences:
+    def test_roads_loaded(self, ds):
+        assert len(ds.feat_names) >= 3
+        assert "横向大道" in ds.feat_names
+        assert "纵向大道" in ds.feat_names
+
+    def test_multiple_fences_available(self, ds):
+        fences = ds.reg["fences"]
+        assert len(fences) >= 2
+        names = [f["dealer"] for f in fences]
+        assert "测试经销商A" in names
+        assert "测试经销商B" in names
+
+    def test_road_line_lookup(self, ds):
+        from territory_ir.semantics import road_line_gcj
+        line = road_line_gcj(ds, "横向大道")
+        assert not line.is_empty

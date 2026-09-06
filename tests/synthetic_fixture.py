@@ -47,16 +47,31 @@ def make_synthetic_dataset(tmp_path: Path) -> Path:
         {"type": "FeatureCollection", "features": parents},
         ensure_ascii=False))
 
+    # 构造横穿网格的道路与河流 (WKT linestring)
+    # 网格范围: lon 113.0-113.2, lat 22.8-23.2
+    roads = [
+        {"name": "横向大道", "cls": "primary", "wkt": "LINESTRING (113.0 23.0, 113.2 23.0)"},
+        {"name": "纵向大道", "cls": "primary", "wkt": "LINESTRING (113.1 22.8, 113.1 23.2)"},
+        {"name": "斜穿大道", "cls": "secondary", "wkt": "LINESTRING (113.0 22.8, 113.2 23.2)"},
+    ]
+    rivers = [
+        {"name": "中心河", "wkt": "LINESTRING (113.0 22.95, 113.2 22.95)"}
+    ]
     osm_path = tmp_path / "osm.json"
-    osm_path.write_text(json.dumps({"roads": [], "rivers": [], "adm6": []}))
+    osm_path.write_text(json.dumps({"roads": roads, "rivers": rivers, "adm6": []}, ensure_ascii=False))
 
     region_path = tmp_path / "region.json"
-    # 围栏:覆盖右上 + 右下 (lon 113.1-113.2, lat 22.9-23.2)
-    fence = {
-        "area_id": "test-1", "dealer": "测试经销商",
-        "rings": [[[113.1, 22.9], [113.2, 22.9], [113.2, 23.2], [113.1, 23.2], [113.1, 22.9]]],
+    # 两个测试围栏: 围栏A (右上), 围栏B (左上)
+    fence_a = {
+        "area_id": "test-1", "dealer": "测试经销商A",
+        "rings": [[[113.1, 23.0], [113.2, 23.0], [113.2, 23.2], [113.1, 23.2], [113.1, 23.0]]],
         "area_km2": 3.0,
     }
-    region_path.write_text(json.dumps({"fences": [fence], "stores": []}, ensure_ascii=False))
+    fence_b = {
+        "area_id": "test-2", "dealer": "测试经销商B",
+        "rings": [[[113.0, 23.0], [113.1, 23.0], [113.1, 23.2], [113.0, 23.2], [113.0, 23.0]]],
+        "area_km2": 3.0,
+    }
+    region_path.write_text(json.dumps({"fences": [fence_a, fence_b], "stores": []}, ensure_ascii=False))
 
     return tmp_path
