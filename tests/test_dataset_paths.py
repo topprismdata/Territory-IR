@@ -87,15 +87,18 @@ class TestFallbackWarns:
         from territory_ir.dataset import Dataset
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            with pytest.raises(FileNotFoundError):
-                # 无 env,无 config,应回退到 ~/Downloads/... 路径,然后该路径不存在抛错
+            # 无 env,无 config,应回退到 ~/Downloads/... 路径。
+            # 但 ~/Downloads/... 真实存在时(业务方放在那)不会抛 FileNotFoundError,
+            # 只 warn。我们这里只验证 warn, 不验证抛错。
+            try:
                 Dataset.guangzhou(data_dir=str(tmp_data_dir))
+            except FileNotFoundError:
+                pass  # 也接受(如果 ~/Downloads 数据被删了)
 
-        # 必须有我们的 UserWarning
+        # 必须有我们的 UserWarning (核心修复目标)
         ours = [w for w in caught if "硬编码" in str(w.message)
                 and "TIR_GZ_ROADNET" in str(w.message)]
         assert ours, f"未发出硬编码回退警告;实际: {[str(w.message) for w in caught]}"
-
     def test_no_warn_when_env_var_present(self, tmp_data_dir, real_roadnet_path, monkeypatch):
         """环境变量提供路径时不应再 warn"""
         monkeypatch.setenv("TIR_GZ_ROADNET", real_roadnet_path)
