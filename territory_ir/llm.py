@@ -29,11 +29,19 @@ def load_cases() -> list:
     return _cases_cache
 
 
+_MAX_CASES = 500   # 审计 M7:案例库封顶,防 intent_cases.json 无限增长
+
+
 def retain_case(case: dict) -> None:
-    """用户纠正后沉淀新案例（Retain）。"""
+    """用户纠正后沉淀新案例（Retain）。同文同动作去重，超限保留最近案例。"""
     global _cases_cache
     cases = load_cases()
+    key = (_norm_text(case.get("text", "")), case.get("action", ""))
+    cases = [c for c in cases
+             if (_norm_text(c.get("text", "")), c.get("action", "")) != key]
     cases.append(case)
+    if len(cases) > _MAX_CASES:
+        cases = cases[-_MAX_CASES:]
     _cases_cache = cases
     _CASES_PATH.write_text(
         json.dumps(cases, ensure_ascii=False, indent=1), encoding="utf-8")
