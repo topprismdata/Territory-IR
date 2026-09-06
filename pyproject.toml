@@ -1,9 +1,9 @@
 [project]
 name = "territory-ir"
-version = "0.1.0"
+version = "0.3.0"
 description = "TerritoryIR — 领地单元片编译/重演/调整核心（统一铺盖 → 真值片 → 条款 → 重演）"
 requires-python = ">=3.10"
-dependencies = ["shapely>=2.0"]
+dependencies = ["shapely>=2.0", "numpy>=1.24"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "pytest-cov>=5"]
