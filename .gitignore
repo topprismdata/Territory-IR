@@ -9,3 +9,4 @@ geojson/
 sessions/
 territory_ir_dataset.json
 llm_config.json
+.coverage
