@@ -368,3 +368,43 @@ OK
 6. **[docs]** README 缺 LICENSE、CHANGELOG、CONTRIBUTING、架构图
 7. **[test]** 缺 `coords.py` 单元测试(往返、边界、境外)
 8. **[refactor]** `Dataset.install()` 全局污染建议弃用
+
+## 自我修正(2026-09-06 第二轮)
+
+用户指出首次审核不专业,自查发现 3 个判断错误:
+
+1. **测试覆盖率严重低估**: 1997 行源码 / 97 行测试 = 1:20;
+   `coords.py` / `semantics.py` / `session.py` / `dataset.py` / `llm.py`
+   全部 0 单元测试。`test_intents.py` 只断言 `action` 字段,不查 `params`,
+   严格说是"意图 action 字段字符串解析的最小子集"而非"回归测试"。
+2. **PR #2 首次提交未补测试**, 违反了 TDD 原则, 也违反 superpowers 的
+   "verification before completion"。补测试时才发现 `coords.py` 有真实 bug:
+   `wgs2gcj` 不检查 `out_of_china`, 境外点被公式错误处理。
+3. **评分偏高**: ③ 纯代码质量原评 3/5 → 实际应 **2/5**(测试基本不存在)。
+
+### 第二轮修复
+
+- 新增 40 个 CI-friendly 测试(coords 100% / dataset 73% / 总 38%)
+- 修复 coords.py `wgs2gcj` 境外点偏移 bug
+- 全部 40 测试 PASS, 在 PR #2 第二个 commit (6f9b01c)
+
+### 教训(沉淀)
+
+- 测试覆盖率是基本规范, 不是 nice-to-have:
+  < 20% 覆盖率的项目 = "基本规范都没满足", 不应评 3/5 以上
+- 审核 PR 必须先补失败测试, 再修代码, 否则无法证明修复有效
+- 断言强度要查: `assert intent["action"] == action` 不代表"意图解析正确",
+  params / side_effect / return shape 都要查
+
+### 最终覆盖率 (40 测试后)
+
+```
+Name                        Stmts   Miss  cover
+territory_ir/__init__.py        4      0   100%
+territory_ir/coords.py         77      0   100%  ← 关键修复点
+territory_ir/dataset.py       353     97    73%
+territory_ir/llm.py            91     73    20%
+territory_ir/semantics.py     163    146    10%
+territory_ir/session.py       418    369    12%
+TOTAL                        1106    685    38%
+```
