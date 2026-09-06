@@ -15,7 +15,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from shapely import ops, wkt
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Polygon
 from shapely.strtree import STRtree
 
 from .coords import gcj2wgs_vec
@@ -122,7 +122,9 @@ class Dataset:
         with open(self.osm_path, encoding="utf-8") as fh:
             self.osm = json.load(fh)
 
-        self.feat_geoms, self.feat_names, self.feat_rank = [], [], {}
+        self.feat_geoms: list[LineString] = []
+        self.feat_names: list[str] = []
+        self.feat_rank: dict[str, int] = {}
         for r in self.osm["roads"]:
             nm = r.get("name")
             if not nm:
@@ -225,8 +227,10 @@ class Dataset:
             ap = Path(__file__).resolve().parent / "road_aliases.json"
         if ap.exists():
             raw = json.loads(ap.read_text(encoding="utf-8"))
+            # json.loads 的 dict 键在运行时恒为 str；不同 typeshed 版本可能把
+            # raw.items() 的键推断成 int，故用 isinstance 显式收窄（非抑制）。
             for k, v in raw.items():
-                if not k.startswith("_"):
+                if isinstance(k, str) and not k.startswith("_"):
                     self.road_aliases[_norm_key(k)] = v
 
     def _add_feat(self, nm, g, rk_default):
@@ -270,13 +274,13 @@ class Dataset:
         for k in range(len(self.U)):
             for f in self.feats_of(k):
                 byf[(self.U[k][1], self.U[k][2], f)].add(k)
-        for (b, a, f), ks in byf.items():
+        for (b, a, f), ks2 in byf.items():
             kind = "river" if f in self._river_name_set else "road"
             v.append(
                 (
                     f"{b}沿{f}(限{a}内)",
                     {"type": "feat", "street": b, "feat": f, "kind": kind, "within": a},
-                    set(ks),
+                    set(ks2),
                 )
             )
         v.append(("零星地块", {"type": "pieces", "ids": []}, set()))
@@ -331,7 +335,8 @@ class Dataset:
     # ---------- 贪心合成 ----------
     def synth(self, zg, T):
         T = set(T)
-        chosen, cov = [], set()
+        chosen: list[tuple[str, dict]] = []
+        cov: set[int] = set()
         V = self.vocab()
         while cov < T:
             best = None
@@ -407,6 +412,7 @@ class Dataset:
             dd = self.spoly[j].boundary.distance(c) * 111000
             if best is None or dd < best[1]:
                 best = (j, dd)
+        assert best is not None  # self.spoly 非空，上面循环必然命中
         j = best[0]
         cands = sorted(
             (

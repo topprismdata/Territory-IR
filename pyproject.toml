@@ -22,6 +22,7 @@ include = ["territory_ir*"]
 testpaths = ["tests"]
 markers = [
     "local_data: 依赖本机大体积真实地理数据的测试（CI默认跳过）",
+    "slow: 单次编译>60s的重场景（全量跑: pytest -m 'local_data'）",
 ]
 addopts = "-m 'not local_data'"
 
@@ -55,6 +56,11 @@ ignore_missing_imports = true
 check_untyped_defs = true
 warn_redundant_casts = true
 warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = "numpy.*"
+follow_imports = "skip"
+follow_imports_for_stubs = true
 
 [tool.coverage.run]
 source = ["territory_ir", "server"]

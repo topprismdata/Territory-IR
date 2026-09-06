@@ -20,6 +20,7 @@ import re as _re
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
@@ -101,7 +102,8 @@ class Copilot:
             self.ds, persist_dir=str(persist_dir or (ROOT / "sessions"))
         )
         self.sess.load()
-        self.pending = None  # {"kind":"split"|"merge", "result":[fence...], "removed":[...], "desc":str}
+        # {"kind":"split"|"merge", "result":[fence...], "removed":[...], "desc":str}
+        self.pending: dict[str, Any] | None = None
 
     # ---------- 动作 ----------
     def state(self):
@@ -137,7 +139,7 @@ class Copilot:
             intent = tir_llm.parse_intent(
                 text,
                 str(self.ds.data_dir),
-                {"fence_names": [f["name"] for f in self.sess.fences]},
+                [f["name"] for f in self.sess.fences],
             )
         act = intent["action"]
         step(f"📋 意图 = {act}")
@@ -296,7 +298,9 @@ class Copilot:
                 tg = intent.get("targets") or []
                 step(f"🔗 片并集合并 {len(tg)} 个围栏…")
                 merged = self.sess.merge_preview(tg)  # 零副作用,校验+预览
-                parents = self.sess.pending["parents"]
+                sp = self.sess.pending
+                assert sp is not None  # merge_preview 上一行已写入预览态
+                parents = sp["parents"]
                 self.pending = {
                     "kind": "merge",
                     "result": [merged],
@@ -375,7 +379,7 @@ def make_handler(cp: Copilot, index_html: str):
         def _send(self, code, body, ctype="application/json; charset=utf-8"):
             data = (
                 json.dumps(body, ensure_ascii=False).encode()
-                if not isinstance(body, (str, bytes))
+                if not isinstance(body, str | bytes)
                 else (body.encode() if isinstance(body, str) else body)
             )
             self.send_response(code)

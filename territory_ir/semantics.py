@@ -32,7 +32,7 @@ def osm_catalog(ds: Dataset) -> dict:
     """地物/街道面 → osm_parsed 兼容目录（LLM 语义与 lookup 用）。
 
     roads 值取自 OSM 地物（WGS）；districts = 街道面（GCJ）。"""
-    roads = {}
+    roads: dict[str, list[list[list[float]]]] = {}
     for i, nm in enumerate(ds.feat_names):
         if nm not in roads:
             seg = [[round(x, 6), round(y, 6)] for x, y in ds.feat_geoms[i].coords][:64]
@@ -118,12 +118,14 @@ def split_pieces_by_road(ds: Dataset, pieces, line, side: str) -> tuple[set, set
         if line.geom_type in ("MultiLineString", "MultiPolygon")
         else [line]
     )
-    chosen, other = set(), set()
+    chosen: set[int] = set()
+    other: set[int] = set()
     for k in pieces:
         c = ds.U[k][0].centroid
         best_d = 1e18
         best_p = None
-        best_dv = None
+        # 占位初值：仅 best_p 命中时才会被读取（与 best_p 同块赋值）
+        best_dv = (0.0, 0.0)
         for seg in segs:
             if seg.distance(c) >= best_d:
                 continue
@@ -229,7 +231,7 @@ def street_district_map(ds: Dataset) -> dict:
         attrs = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(attrs, dict):
             attrs = attrs.get("units", [])
-        cnt = {}
+        cnt: dict[str, Counter] = {}
         for a in attrs:
             if isinstance(a, dict) and a.get("street") and a.get("district"):
                 cnt.setdefault(a["street"], Counter())[a["district"]] += 1

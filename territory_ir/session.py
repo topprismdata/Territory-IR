@@ -14,6 +14,7 @@ import json
 import math
 import uuid
 from pathlib import Path
+from typing import Any, cast
 
 from shapely.geometry import Polygon
 from shapely.ops import unary_union
@@ -44,6 +45,7 @@ class Session:
         self.fences: list[dict] = []
         self.persist_dir = Path(persist_dir)
         self.persist_dir.mkdir(exist_ok=True)
+        self.pending: dict[str, Any] | None  # split/merge 预览态；未出预览时不存在
 
     # ---------- 持久化 ----------
     def save(self, sid="default"):
@@ -133,7 +135,7 @@ class Session:
         from .coords import gcj2wgs
 
         tot = 0.0
-        for poly in (geom.geoms if geom.geom_type == "MultiPolygon" else [geom]):
+        for poly in geom.geoms if geom.geom_type == "MultiPolygon" else [geom]:
             w = [gcj2wgs(x, y) for x, y in poly.exterior.coords]
             lat = sum(p[1] for p in w) / len(w)
             # 平面近似:纬度 km/deg 固定 111.32,经度 km/deg = 111.32·cos(lat)。
@@ -314,7 +316,7 @@ class Session:
                 within = mw.group(1)
                 term = term[: mw.start()].strip()
             if "沿" in term:
-                st, road = [x.strip() for x in term.split("沿", 1)]
+                st, road = (x.strip() for x in term.split("沿", 1))
                 clauses.append(
                     {"type": "feat", "street": st, "feat": road, "within": within}
                 )
@@ -409,7 +411,7 @@ class Session:
         self.save()
         return fence
 
-    def enclosed_region(self, roads, name="多路围合") -> dict:
+    def enclosed_region(self, roads, name="多路围合") -> tuple[dict, Polygon]:
         """N（3-5）条互交道路围合区域：两两交点聚类 → 凸包 → 质心落内的片。
 
         ★ 纯片归属：片原子不切割。"""
@@ -435,7 +437,7 @@ class Session:
         pair_pts = []
         for i, j in combinations(range(len(lines)), 2):
             inter = lines[i].intersection(lines[j])
-            pts = []
+            pts: list[Point] = []
             _collect(inter, pts)
             pair_pts.append(pts)
         all_pts = [p for pts in pair_pts for p in pts]
@@ -447,7 +449,7 @@ class Session:
         cy = statistics.median(p.y for p in all_pts)
         ordered = sorted(all_pts, key=lambda p: (p.x - cx) ** 2 + (p.y - cy) ** 2)
         near = [p for p in ordered if p.distance(ordered[0]) <= 0.30] or ordered[:3]
-        hull = MultiPoint(near).convex_hull
+        hull = cast(Polygon, MultiPoint(near).convex_hull)
         if hull.geom_type != "Polygon" or hull.area < 1e-6:
             raise ValueError("交点无法构成围合区域（近似共线？）")
         pieces = {
@@ -471,7 +473,7 @@ class Session:
         return fence, hull
 
     # ---------- 3. 沿路拆分 ----------
-    def split_preview(self, name_substr, road, side=None) -> dict:
+    def split_preview(self, name_substr, road, side=None) -> tuple[dict, dict]:
         """预览沿路切分（零副作用）：片分堆出两个子围栏，存入 pending。"""
         side = side or "north"
         f = self.find(name_substr)
@@ -547,7 +549,7 @@ class Session:
         fs = [self.find(s) for s in name_substrings]
         if len(fs) < 2:
             raise ValueError("合并至少需要两个围栏")
-        pieces = set()
+        pieces: set[int] = set()
         for f in fs:
             pieces |= f["pieces"] or set()
         if pieces:
