@@ -9,36 +9,46 @@
 - 矢量版本与标量版本结果一致
 - convert() 单点自动方向
 """
+
 import math
+
 import pytest
 
 from territory_ir.coords import (
-    wgs2gcj, gcj2wgs, out_of_china, convert,
-    wgs2gcj_vec, gcj2wgs_vec,
+    convert,
+    gcj2wgs,
+    gcj2wgs_vec,
+    out_of_china,
+    wgs2gcj,
+    wgs2gcj_vec,
 )
 
-
 # ---------- 已知参考点(网上权威验证) ----------
-BEIJING_WGS = (116.397, 39.916)        # 天安门
-SHANGHAI_WGS = (121.473, 31.230)       # 人民广场
-URUMQI_WGS = (87.617, 43.825)          # 乌鲁木齐(偏远,验证偏移公式一致)
-HONG_KONG_WGS = (114.158, 22.286)      # 香港(GCJ 不适用,但在境内框)
-NEW_YORK_WGS = (-74.006, 40.712)       # 纽约(完全境外)
-SYDNEY_WGS = (151.209, -33.868)        # 悉尼(南半球境外)
+BEIJING_WGS = (116.397, 39.916)  # 天安门
+SHANGHAI_WGS = (121.473, 31.230)  # 人民广场
+URUMQI_WGS = (87.617, 43.825)  # 乌鲁木齐(偏远,验证偏移公式一致)
+HONG_KONG_WGS = (114.158, 22.286)  # 香港(GCJ 不适用,但在境内框)
+NEW_YORK_WGS = (-74.006, 40.712)  # 纽约(完全境外)
+SYDNEY_WGS = (151.209, -33.868)  # 悉尼(南半球境外)
 
 
 def _shift_m(p1, p2):
     """两点近似距离(米)"""
-    return math.hypot((p1[0] - p2[0]) * 92_000 * math.cos(math.radians(p1[1])),
-                      (p1[1] - p2[1]) * 111_000)
+    return math.hypot(
+        (p1[0] - p2[0]) * 92_000 * math.cos(math.radians(p1[1])),
+        (p1[1] - p2[1]) * 111_000,
+    )
 
 
 # ---------- 往返精度 ----------
 class TestRoundTrip:
     def test_wgs_to_gcj_to_wgs_china(self):
         """国内点往返应回到原坐标 < 1m"""
-        for label, p in [("北京", BEIJING_WGS), ("上海", SHANGHAI_WGS),
-                         ("乌鲁木齐", URUMQI_WGS)]:
+        for label, p in [
+            ("北京", BEIJING_WGS),
+            ("上海", SHANGHAI_WGS),
+            ("乌鲁木齐", URUMQI_WGS),
+        ]:
             gcj = wgs2gcj(*p)
             back = gcj2wgs(*gcj)
             shift = _shift_m(p, back)
@@ -59,16 +69,16 @@ class TestRoundTrip:
 
 # ---------- 境外点 ----------
 class TestOutOfChina:
-    @pytest.mark.parametrize("p", [NEW_YORK_WGS, SYDNEY_WGS,
-                                   (0.0, 0.0), (200.0, 50.0)])
+    @pytest.mark.parametrize("p", [NEW_YORK_WGS, SYDNEY_WGS, (0.0, 0.0), (200.0, 50.0)])
     def test_out_of_china_returns_original(self, p):
         """境外点 wgs2gcj 不应被偏移"""
         assert out_of_china(*p) is True
         assert wgs2gcj(*p) == p
         assert gcj2wgs(*p) == p
 
-    @pytest.mark.parametrize("p", [BEIJING_WGS, SHANGHAI_WGS, URUMQI_WGS,
-                                   HONG_KONG_WGS])
+    @pytest.mark.parametrize(
+        "p", [BEIJING_WGS, SHANGHAI_WGS, URUMQI_WGS, HONG_KONG_WGS]
+    )
     def test_china_points_in_range(self, p):
         """境内点应在判定框内"""
         assert out_of_china(*p) is False
@@ -96,7 +106,7 @@ class TestBoundaries:
 
     def test_corner_inside(self):
         """四角都应在框内(中国全境)"""
-        assert out_of_china(73.0, 1.0) is False   # 西南角附近
+        assert out_of_china(73.0, 1.0) is False  # 西南角附近
         assert out_of_china(135.0, 53.0) is False  # 东北角
 
 
@@ -107,20 +117,22 @@ class TestVectorConsistency:
         pts = [BEIJING_WGS, SHANGHAI_WGS, URUMQI_WGS, (110.0, 30.0)]
         scalar = [wgs2gcj(*p) for p in pts]
         import numpy as np
+
         lons = np.array([p[0] for p in pts])
         lats = np.array([p[1] for p in pts])
         v_lon, v_lat = wgs2gcj_vec(lons, lats)
-        for (sx, sy), vx, vy in zip(scalar, v_lon, v_lat):
+        for (sx, sy), vx, vy in zip(scalar, v_lon, v_lat, strict=True):
             assert abs(sx - vx) < 1e-9
             assert abs(sy - vy) < 1e-9
 
     def test_gcj2wgs_vec_matches_scalar(self):
         pts = [wgs2gcj(*p) for p in [BEIJING_WGS, SHANGHAI_WGS]]
         import numpy as np
+
         lons = np.array([p[0] for p in pts])
         lats = np.array([p[1] for p in pts])
         v_lon, v_lat = gcj2wgs_vec(lons, lats)
-        for (sx, sy), vx, vy in zip(pts, v_lon, v_lat):
+        for (sx, sy), vx, _vy in zip(pts, v_lon, v_lat, strict=True):
             scalar_x, scalar_y = gcj2wgs(sx, sy)
             assert abs(scalar_x - vx) < 1e-9
 

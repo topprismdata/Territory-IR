@@ -9,8 +9,9 @@
     ds = Dataset.guangzhou(data_dir="data/gz")
     row = ds.compile_fence(fence)      # → {human_terms, engine_terms, T, S, J, iou}
 """
-from .dataset import Dataset
+
 from . import coords, semantics
+from .dataset import Dataset
 
 __version__ = "0.1.0"
 __all__ = ["Dataset", "coords", "semantics", "__version__"]

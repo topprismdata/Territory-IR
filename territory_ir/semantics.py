@@ -3,9 +3,11 @@
 ★ 核心不变量：split_pieces_by_road 等全部分堆/判侧操作只改变片归属，
   永不切割片几何（路仅作判侧依据）。
 """
+
 from __future__ import annotations
 
 from collections import Counter
+from typing import TYPE_CHECKING
 
 from shapely.geometry import Point
 from shapely.ops import unary_union
@@ -13,11 +15,14 @@ from shapely.ops import unary_union
 from .coords import wgs2gcj
 from .dataset import Dataset
 
+if TYPE_CHECKING:
+    from shapely.geometry import MultiPolygon, Polygon
+
 _SIDE_MAP = {"west": "西", "east": "东", "south": "南", "north": "北"}
 _DIR_SIDE = {"北": "south", "南": "north", "西": "east", "东": "west"}
 
 
-def pieces_union(ds: Dataset, pieces) -> "Polygon | MultiPolygon":
+def pieces_union(ds: Dataset, pieces) -> Polygon | MultiPolygon:
     """S 片并集（保留 MultiPolygon——不连续领地不能截成最大块）。"""
     geoms = [ds.U[k][0] for k in sorted(pieces)]
     return unary_union(geoms)
@@ -30,8 +35,7 @@ def osm_catalog(ds: Dataset) -> dict:
     roads = {}
     for i, nm in enumerate(ds.feat_names):
         if nm not in roads:
-            seg = [[round(x, 6), round(y, 6)]
-                   for x, y in ds.feat_geoms[i].coords][:64]
+            seg = [[round(x, 6), round(y, 6)] for x, y in ds.feat_geoms[i].coords][:64]
             if len(seg) >= 2:
                 roads.setdefault(nm, [seg])
     districts = {}
@@ -46,6 +50,7 @@ def osm_catalog(ds: Dataset) -> dict:
 
 def _norm_name(s: str) -> str:
     import re as _re
+
     return _re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(s).lower())
 
 
@@ -59,8 +64,8 @@ def road_line_gcj(ds: Dataset, name: str):
     key = _norm_name(name)
     if key in _line_cache:
         return _line_cache[key]
-    from shapely.geometry import LineString
     from shapely import ops as _ops
+    from shapely.geometry import LineString
 
     norm = _norm_name(name)
 
@@ -72,19 +77,29 @@ def road_line_gcj(ds: Dataset, name: str):
             break
     else:
         # ② 地物名子串（WGS）
-        matched = [g for g, n in zip(ds.feat_geoms, ds.feat_names)
-                   if norm and norm in _norm_name(n)]
+        matched = [
+            g
+            for g, n in zip(ds.feat_geoms, ds.feat_names, strict=True)
+            if norm and norm in _norm_name(n)
+        ]
         if not matched:
             # ③ 别名映射（G324→广汕公路 等）
             resolved = getattr(ds, "road_aliases", {}).get(norm)
             if resolved:
-                matched = [g for g, n in zip(ds.feat_geoms, ds.feat_names)
-                           if _norm_name(resolved) in _norm_name(n)]
+                matched = [
+                    g
+                    for g, n in zip(ds.feat_geoms, ds.feat_names, strict=True)
+                    if _norm_name(resolved) in _norm_name(n)
+                ]
         if not matched:
             import difflib
-            cands = sorted({n for n in ds.feat_names if n},
-                           key=lambda n: -difflib.SequenceMatcher(
-                               None, norm, _norm_name(n)).ratio())[:5]
+
+            cands = sorted(
+                {n for n in ds.feat_names if n},
+                key=lambda n: -difflib.SequenceMatcher(
+                    None, norm, _norm_name(n)
+                ).ratio(),
+            )[:5]
             raise ValueError(f"路网中找不到「{name}」。相近路名：{'、'.join(cands)}")
         line = unary_union(matched)
 
@@ -98,8 +113,11 @@ def split_pieces_by_road(ds: Dataset, pieces, line, side: str) -> tuple[set, set
 
     每片取质心，找最近路段方向向量 d，法向统一指向 side 一侧，
     dot(质心-最近点, n) > 0 即命中。"""
-    segs = (list(line.geoms) if line.geom_type in
-            ("MultiLineString", "MultiPolygon") else [line])
+    segs = (
+        list(line.geoms)
+        if line.geom_type in ("MultiLineString", "MultiPolygon")
+        else [line]
+    )
     chosen, other = set(), set()
     for k in pieces:
         c = ds.U[k][0].centroid
@@ -110,7 +128,7 @@ def split_pieces_by_road(ds: Dataset, pieces, line, side: str) -> tuple[set, set
             if seg.distance(c) >= best_d:
                 continue
             coords = list(seg.coords)
-            for a, b in zip(coords, coords[1:]):
+            for a, b in zip(coords, coords[1:], strict=True):
                 ax, ay = a
                 bx, by = b
                 ex, ey = bx - ax, by - ay
@@ -147,12 +165,28 @@ def select_pieces(ds: Dataset, pieces, selector: str) -> tuple[set, str]:
     sel = (selector or "全部").strip()
     if sel in ("全部", "整体", "所有", "", "不做了", "退出", "整个区域", "整个"):
         return allp, "整个区域"
-    half = {"东": "east", "南": "south", "西": "west", "北": "north",
-            "东边": "east", "南边": "south", "西边": "west", "北边": "north",
-            "东部": "east", "南部": "south", "西部": "west", "北部": "north",
-            "东侧": "east", "南侧": "south", "西侧": "west", "北侧": "north",
-            "东半区": "east", "南半区": "south", "西半区": "west",
-            "北半区": "north"}.get(sel)
+    half = {
+        "东": "east",
+        "南": "south",
+        "西": "west",
+        "北": "north",
+        "东边": "east",
+        "南边": "south",
+        "西边": "west",
+        "北边": "north",
+        "东部": "east",
+        "南部": "south",
+        "西部": "west",
+        "北部": "north",
+        "东侧": "east",
+        "南侧": "south",
+        "西侧": "west",
+        "北侧": "north",
+        "东半区": "east",
+        "南半区": "south",
+        "西半区": "west",
+        "北半区": "north",
+    }.get(sel)
     if half:
         fp = pieces_union(ds, allp)
         c = fp.centroid
@@ -170,8 +204,7 @@ def select_pieces(ds: Dataset, pieces, selector: str) -> tuple[set, str]:
         if not picked:
             raise ValueError(f"「{sel}」没有命中任何单元片")
         return picked, f"{sel[:1]}部半区"
-    hit_street = {k for k in allp
-                  if ds.U[k][1] == sel or ds.U[k][2] == sel}
+    hit_street = {k for k in allp if ds.U[k][1] == sel or ds.U[k][2] == sel}
     if hit_street:
         return hit_street, f"{sel}片区"
     sd = street_district_map(ds)
@@ -182,7 +215,8 @@ def select_pieces(ds: Dataset, pieces, selector: str) -> tuple[set, str]:
         if hit:
             return hit, f"{sel}片区"
     raise ValueError(
-        f"无法识别片区「{sel}」。可用：整个区域 / 东南西北半区 / 街道名 / 区名")
+        f"无法识别片区「{sel}」。可用：整个区域 / 东南西北半区 / 街道名 / 区名"
+    )
 
 
 def street_district_map(ds: Dataset) -> dict:
@@ -191,6 +225,7 @@ def street_district_map(ds: Dataset) -> dict:
     path = ds.data_dir / "unit_attributes.json"
     if path.exists():
         import json
+
         attrs = json.loads(path.read_text(encoding="utf-8"))
         if isinstance(attrs, dict):
             attrs = attrs.get("units", [])
@@ -202,8 +237,7 @@ def street_district_map(ds: Dataset) -> dict:
     return m
 
 
-def ir_fence_from_semantics(ds: Dataset, areas: list, bounds: dict,
-                            center) -> set:
+def ir_fence_from_semantics(ds: Dataset, areas: list, bounds: dict, center) -> set:
     """自然语言语义结构 → IR 片集合（新建合同构面的 IR 路径）。
 
     areas: 街道/区名列表；bounds: {"北": "路名"}（北界=片在路南）；
@@ -212,14 +246,17 @@ def ir_fence_from_semantics(ds: Dataset, areas: list, bounds: dict,
     base: set = set()
     for a in areas or []:
         a = str(a).strip()
-        base |= {k for k in range(len(ds.U))
-                 if ds.U[k][1] == a or ds.U[k][2] == a
-                 or sd.get(ds.U[k][1], "") == a
-                 or sd.get(ds.U[k][2], "") == a}
+        base |= {
+            k
+            for k in range(len(ds.U))
+            if ds.U[k][1] == a
+            or ds.U[k][2] == a
+            or sd.get(ds.U[k][1], "") == a
+            or sd.get(ds.U[k][2], "") == a
+        }
     if not base and center:
         c = Point(float(center[0]), float(center[1]))
-        base = {k for k in range(len(ds.U))
-                if ds.U[k][0].distance(c) <= 0.06}  # ≈6km
+        base = {k for k in range(len(ds.U)) if ds.U[k][0].distance(c) <= 0.06}  # ≈6km
     for d, nm in (bounds or {}).items():
         side = _DIR_SIDE.get(str(d)[:1])
         if not side:

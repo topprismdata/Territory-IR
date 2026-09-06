@@ -7,27 +7,41 @@
 install(globals()) 把全部公共名拷入调用方全局命名空间——
 用于旧代码的薄适配层（兼容 `tc.U`、`tc.compile_fence` 模块属性式访问）。
 """
+
 from __future__ import annotations
 
 import json
-from collections import Counter, defaultdict
+from collections import defaultdict
 from pathlib import Path
 
 from shapely import ops, wkt
 from shapely.geometry import Polygon
 from shapely.strtree import STRtree
 
-from .coords import gcj2wgs, gcj2wgs_vec
+from .coords import gcj2wgs_vec
+
 
 def _norm_key(s: str) -> str:
     import re as _re
+
     return _re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(s).lower())
 
 
-CLASS_RANK = {"motorway": 0, "motorway_link": 1, "trunk": 1, "trunk_link": 2,
-              "primary": 2, "primary_link": 3, "secondary": 3,
-              "secondary_link": 4, "tertiary": 4, "tertiary_link": 5,
-              "residential": 6, "unclassified": 7, "service": 8}
+CLASS_RANK = {
+    "motorway": 0,
+    "motorway_link": 1,
+    "trunk": 1,
+    "trunk_link": 2,
+    "primary": 2,
+    "primary_link": 3,
+    "secondary": 3,
+    "secondary_link": 4,
+    "tertiary": 4,
+    "tertiary_link": 5,
+    "residential": 6,
+    "unclassified": 7,
+    "service": 8,
+}
 RIVER_RANK = 3
 
 # 审计 M4:路网文件 sha256 按 path 缓存(进程内不变),避免每次 compile_fence 全量重读
@@ -37,9 +51,18 @@ _ROADNET_HASH: dict = {}
 class Dataset:
     """一座城市的 TerritoryIR 数据集。"""
 
-    def __init__(self, *, data_dir, roadnet_path, streets_path, osm_path,
-                 name="default", km2_deg2=12364.0,
-                 feat_buf_m=100.0, band_buf_m=150.0):
+    def __init__(
+        self,
+        *,
+        data_dir,
+        roadnet_path,
+        streets_path,
+        osm_path,
+        name="default",
+        km2_deg2=12364.0,
+        feat_buf_m=100.0,
+        band_buf_m=150.0,
+    ):
         self.name = name
         self.data_dir = Path(data_dir)
         self.roadnet_path = str(roadnet_path)
@@ -74,8 +97,9 @@ class Dataset:
                 if g["type"] == "Polygon":
                     p = Polygon(g["coordinates"][0], g["coordinates"][1:])
                 elif g["type"] == "MultiPolygon":
-                    p = ops.unary_union([Polygon(c[0], c[1:])
-                                         for c in g["coordinates"]])
+                    p = ops.unary_union(
+                        [Polygon(c[0], c[1:]) for c in g["coordinates"]]
+                    )
                 else:
                     continue
             except Exception:  # noqa: BLE001
@@ -86,11 +110,12 @@ class Dataset:
                 p = p.buffer(0)
             self.spoly.append(p)
             pr = f["properties"]
-            self.sname.append(pr.get("街道[内置]") or pr.get("街道")
-                              or pr.get("name") or "")
+            self.sname.append(
+                pr.get("街道[内置]") or pr.get("街道") or pr.get("name") or ""
+            )
         self.sst = STRtree(self.spoly)
         self.sbt = ops.unary_union([p.boundary for p in self.spoly])
-        self.spoly_by_name = dict(zip(self.sname, self.spoly))
+        self.spoly_by_name = dict(zip(self.sname, self.spoly, strict=True))
 
         with open(Path(self.data_dir) / "region.json", encoding="utf-8") as fh:
             self.reg = json.load(fh)
@@ -121,8 +146,7 @@ class Dataset:
         self.adm6 = []
         for rr in self.osm["adm6"]:
             try:
-                self.adm6.append((rr.get("name", ""),
-                                  wkt.loads(rr["wkt"]).boundary))
+                self.adm6.append((rr.get("name", ""), wkt.loads(rr["wkt"]).boundary))
             except Exception:  # noqa: BLE001
                 pass
         self.adm6bt = ops.unary_union([b for _, b in self.adm6])
@@ -161,29 +185,37 @@ class Dataset:
         # 地物贴附（一次性向量化 GCJ→WGS，避免 6261 次逐片 transform）
         import numpy as np
         import shapely
+
         self._feats = {}
         self.FEATS = defaultdict(set)
         all_geoms = [self.U[k][0] for k in range(len(self.U))]
         coords_arr = shapely.get_coordinates(all_geoms)
         lon2, lat2 = gcj2wgs_vec(coords_arr[:, 0], coords_arr[:, 1])
-        self.U_wgs = list(shapely.set_coordinates(
-            np.array(all_geoms, dtype=object),
-            np.column_stack([lon2, lat2])))
+        self.U_wgs = list(
+            shapely.set_coordinates(
+                np.array(all_geoms, dtype=object), np.column_stack([lon2, lat2])
+            )
+        )
         for _k in range(len(self.U)):
             for _nm in self.feats_of(_k):
                 self.FEATS[_nm].add(_k)
 
-        self._river_name_set = {r.get("name", "") for r in self.osm.get("rivers", [])
-                                if r.get("name", "")}
+        self._river_name_set = {
+            r.get("name", "") for r in self.osm.get("rivers", []) if r.get("name", "")
+        }
         self._VOCAB = None
 
         # 国道/省道编号 → 几何（来自 fetch_region_osm 的 osm_parsed.refs，WGS）
         self.osm_refs = {}
-        for rp in (Path(self.data_dir) / "osm_refs.json",
-                   Path(self.data_dir) / "osm_parsed.json"):
+        for rp in (
+            Path(self.data_dir) / "osm_refs.json",
+            Path(self.data_dir) / "osm_parsed.json",
+        ):
             if rp.exists():
                 parsed = json.loads(rp.read_text(encoding="utf-8"))
-                self.osm_refs = parsed.get("refs", parsed)  # osm_refs.json 或 osm_parsed 格式
+                self.osm_refs = parsed.get(
+                    "refs", parsed
+                )  # osm_refs.json 或 osm_parsed 格式
                 break
 
         # 道路编号别名（全局映射）：g324 → 广汕公路 等
@@ -198,8 +230,11 @@ class Dataset:
                     self.road_aliases[_norm_key(k)] = v
 
     def _add_feat(self, nm, g, rk_default):
-        parts = ([g] if g.geom_type == "LineString"
-                 else (list(g.geoms) if g.geom_type == "MultiLineString" else []))
+        parts = (
+            [g]
+            if g.geom_type == "LineString"
+            else (list(g.geoms) if g.geom_type == "MultiLineString" else [])
+        )
         for pp in parts:
             if pp.length > 1e-5:
                 self.feat_geoms.append(pp)
@@ -228,17 +263,22 @@ class Dataset:
         for k in range(len(self.U)):
             byba[(self.U[k][1], self.U[k][2])].append(k)
         for (b, a), ks in byba.items():
-            v.append((f"{b}(限{a}内)",
-                      {"type": "slice", "street": b, "within": a}, set(ks)))
+            v.append(
+                (f"{b}(限{a}内)", {"type": "slice", "street": b, "within": a}, set(ks))
+            )
         byf = defaultdict(set)
         for k in range(len(self.U)):
             for f in self.feats_of(k):
                 byf[(self.U[k][1], self.U[k][2], f)].add(k)
         for (b, a, f), ks in byf.items():
             kind = "river" if f in self._river_name_set else "road"
-            v.append((f"{b}沿{f}(限{a}内)",
-                      {"type": "feat", "street": b, "feat": f,
-                       "kind": kind, "within": a}, set(ks)))
+            v.append(
+                (
+                    f"{b}沿{f}(限{a}内)",
+                    {"type": "feat", "street": b, "feat": f, "kind": kind, "within": a},
+                    set(ks),
+                )
+            )
         v.append(("零星地块", {"type": "pieces", "ids": []}, set()))
         for k in range(len(self.U)):
             v.append((f"P#{k}", {"type": "pieces", "ids": [k]}, {k}))
@@ -251,12 +291,18 @@ class Dataset:
         if t == "band":
             return set()
         if t == "slice":
-            return {k for k, x in enumerate(self.U)
-                    if x[1] == clause["street"] and x[2] == clause["within"]}
+            return {
+                k
+                for k, x in enumerate(self.U)
+                if x[1] == clause["street"] and x[2] == clause["within"]
+            }
         if t == "feat":
-            return {k for k in self.FEATS.get(clause["feat"], set())
-                    if self.U[k][1] == clause["street"]
-                    and (not clause.get("within") or self.U[k][2] == clause["within"])}
+            return {
+                k
+                for k in self.FEATS.get(clause["feat"], set())
+                if self.U[k][1] == clause["street"]
+                and (not clause.get("within") or self.U[k][2] == clause["within"])
+            }
         if t == "block":
             return {k for k, x in enumerate(self.U) if x[1] == clause["street"]}
         if t == "pieces":
@@ -271,8 +317,10 @@ class Dataset:
             if cl["type"] == "band":
                 nm = cl["ref"].replace("河岸", "")
                 g = self.spoly_by_name.get(
-                    nm.replace("至", "").split("—")[0] if "—" in nm
-                    else nm.replace("至", ""))
+                    nm.replace("至", "").split("—")[0]
+                    if "—" in nm
+                    else nm.replace("至", "")
+                )
                 if g is not None:
                     a_ = nm.replace("至", "").split("—")[0] if "—" in nm else nm
                     inside = [x[0] for x in self.U if x[2] == a_]
@@ -302,14 +350,14 @@ class Dataset:
                 break
             _, label, clause, s = best
             chosen.append((label, clause))
-            cov |= (s & T)
+            cov |= s & T
         return chosen
 
     # ---------- 人话 ----------
     def verbalize(self, chosen, zg_):
         by_street = defaultdict(list)
         bands = []
-        for label, cl in chosen:
+        for _, cl in chosen:
             if cl["type"] == "band":
                 bands.append(cl)
                 continue
@@ -319,11 +367,13 @@ class Dataset:
                 by_street[cl["street"]].append(cl)
         parts = []
         for stn, cls in sorted(by_street.items(), key=lambda kv: -len(kv[1])):
-            whole = any(c["type"] == "slice" and c["street"] == c["within"]
-                        for c in cls) or (
-                len(cls) == 1 and cls[0]["type"] == "block")
-            feats = sorted({c["feat"] for c in cls if c["type"] == "feat"},
-                           key=lambda f: -self.feat_rank.get(f, 7))
+            whole = any(
+                c["type"] == "slice" and c["street"] == c["within"] for c in cls
+            ) or (len(cls) == 1 and cls[0]["type"] == "block")
+            feats = sorted(
+                {c["feat"] for c in cls if c["type"] == "feat"},
+                key=lambda f: -self.feat_rank.get(f, 7),
+            )
             if whole:
                 parts.append(stn)
             elif feats:
@@ -341,8 +391,15 @@ class Dataset:
             dd6 = b6.distance(c) * 111000
             if best6 is None or dd6 < best6[1]:
                 best6 = (n6, dd6)
-        side = ("西" if c.x < zg.centroid.x else "东" if c.x > zg.centroid.x
-                else "南" if pc.centroid.y < zg.centroid.y else "北")
+        side = (
+            "西"
+            if c.x < zg.centroid.x
+            else (
+                "东"
+                if c.x > zg.centroid.x
+                else "南" if pc.centroid.y < zg.centroid.y else "北"
+            )
+        )
         if best6 and best6[1] < 300:
             return {"type": "band", "side": side, "ref": f"{best6[0]}界"}
         best = None
@@ -351,12 +408,19 @@ class Dataset:
             if best is None or dd < best[1]:
                 best = (j, dd)
         j = best[0]
-        cands = sorted(((self.sname[j2],
-                         self.spoly[j2].boundary.distance(c) * 111000)
-                        for j2 in range(len(self.spoly)) if j2 != j),
-                       key=lambda t: t[1])
-        return {"type": "band", "side": side,
-                "ref": f"{self.sname[j]}—{cands[0][0] if cands else '?'}界"}
+        cands = sorted(
+            (
+                (self.sname[j2], self.spoly[j2].boundary.distance(c) * 111000)
+                for j2 in range(len(self.spoly))
+                if j2 != j
+            ),
+            key=lambda t: t[1],
+        )
+        return {
+            "type": "band",
+            "side": side,
+            "ref": f"{self.sname[j]}—{cands[0][0] if cands else '?'}界",
+        }
 
     # ---------- 单围栏编译 ----------
     def compile_fence(self, fence):
@@ -366,15 +430,25 @@ class Dataset:
         if zg.geom_type == "MultiPolygon":
             zg = max(zg.geoms, key=lambda g: g.area)
         fa = zg.area
-        T = {k for k in range(len(self.U))
-             if self.U[k][0].intersection(zg).area / max(self.U[k][0].area, 1e-12) >= 0.5
-             or self.U[k][0].intersection(zg).area / fa >= 0.3}
-        psel = {i for i in self.pt.query(zg)
-                if self.parents[i].intersection(zg).area / max(self.parents[i].area, 1e-12) >= 0.5
-                or self.parents[i].intersection(zg).area / fa >= 0.3}
+        T = {
+            k
+            for k in range(len(self.U))
+            if self.U[k][0].intersection(zg).area / max(self.U[k][0].area, 1e-12) >= 0.5
+            or self.U[k][0].intersection(zg).area / fa >= 0.3
+        }
+        psel = {
+            i
+            for i in self.pt.query(zg)
+            if self.parents[i].intersection(zg).area / max(self.parents[i].area, 1e-12)
+            >= 0.5
+            or self.parents[i].intersection(zg).area / fa >= 0.3
+        }
         if not psel:
-            psel = {i for i in self.pt.query(zg)
-                    if self.parents[i].intersection(zg).area > 1e-9}
+            psel = {
+                i
+                for i in self.pt.query(zg)
+                if self.parents[i].intersection(zg).area > 1e-9
+            }
         chosen = self.synth(zg, T)
         if chosen:
             S_syn = set()
@@ -382,17 +456,19 @@ class Dataset:
                 S_syn |= self.clause_pieces(c)
             pu = ops.unary_union([self.U[k][0] for k in S_syn])
             strip = zg.difference(pu).intersection(
-                ops.unary_union([self.sbt, self.adm6bt]).buffer(self.BAND_BUF))
+                ops.unary_union([self.sbt, self.adm6bt]).buffer(self.BAND_BUF)
+            )
             if strip.area * self.KM2 > 0.01:
-                pieces = (strip.geoms if strip.geom_type == "MultiPolygon"
-                          else [strip])
+                pieces = strip.geoms if strip.geom_type == "MultiPolygon" else [strip]
                 for pc in pieces:
                     if pc.area * self.KM2 < 0.01:
                         continue
-                    chosen.append((f"{pc.centroid.x:.4f}界带",
-                                   self.band_clause(zg, pc)))
+                    chosen.append(
+                        (f"{pc.centroid.x:.4f}界带", self.band_clause(zg, pc))
+                    )
         clauses = [cl for _, cl in chosen]
         import hashlib
+
         rp = str(self.roadnet_path)
         if rp not in _ROADNET_HASH:
             h = hashlib.sha256()
@@ -401,10 +477,14 @@ class Dataset:
                     h.update(chunk)
             _ROADNET_HASH[rp] = h.hexdigest()[:16]
         libhash = _ROADNET_HASH[rp]
-        ir = {"area_id": fence["area_id"], "ir_version": 1,
-              "tessellation": "U",
-              "unit_library": f"{libhash}+cutv2",
-              "clauses": clauses, "annotations": {}}
+        ir = {
+            "area_id": fence["area_id"],
+            "ir_version": 1,
+            "tessellation": "U",
+            "unit_library": f"{libhash}+cutv2",
+            "clauses": clauses,
+            "annotations": {},
+        }
         S = set()
         bands_g = []
         for cl in clauses:
@@ -417,27 +497,36 @@ class Dataset:
                 if g is not None:
                     inside = [x[0] for x in self.U if x[2] == a]
                     if inside:
-                        bands_g.append(g.difference(
-                            ops.unary_union(inside)))
-        full = (ops.unary_union([self.U[k][0] for k in S] + bands_g)
-                if (S or bands_g) else None)
+                        bands_g.append(g.difference(ops.unary_union(inside)))
+        full = (
+            ops.unary_union([self.U[k][0] for k in S] + bands_g)
+            if (S or bands_g)
+            else None
+        )
         hterms = self.verbalize(chosen, zg)
         hit = len(S & T)
         over = len(S - T)
         miss = len(T - S)
         J = hit / (hit + over + miss) if hit + over + miss else 0
-        cov = (zg.intersection(full).area / zg.area * 100
-               if full is not None else 0)
+        cov = zg.intersection(full).area / zg.area * 100 if full is not None else 0
         ii = self.iou_v(zg, full) if full is not None else 0
-        return {"dealer": fence["dealer"], "area_id": fence["area_id"],
-                "km2": fence["area_km2"],
-                "human_terms": hterms,
-                "engine_terms": [l for l, _ in chosen],
-                "ir": ir, "T": sorted(T), "S": sorted(S),
-                "engine_J": round(J, 3), "engine_hit": hit,
-                "engine_over": over, "engine_miss": miss,
-                "truth_pieces": len(T), "iou": round(ii, 3),
-                "cover": round(cov, 2)}
+        return {
+            "dealer": fence["dealer"],
+            "area_id": fence["area_id"],
+            "km2": fence["area_km2"],
+            "human_terms": hterms,
+            "engine_terms": [lbl for lbl, _ in chosen],
+            "ir": ir,
+            "T": sorted(T),
+            "S": sorted(S),
+            "engine_J": round(J, 3),
+            "engine_hit": hit,
+            "engine_over": over,
+            "engine_miss": miss,
+            "truth_pieces": len(T),
+            "iou": round(ii, 3),
+            "cover": round(cov, 2),
+        }
 
     @staticmethod
     def iou_v(a, b):
@@ -452,21 +541,31 @@ class Dataset:
         for k in list(self.__dict__):
             if not k.startswith("_") and k not in skip:
                 g[k] = self.__dict__[k]
-        for m in ("feats_of", "vocab", "clause_pieces", "eval_sir", "synth",
-                  "verbalize", "band_clause", "compile_fence", "iou_v"):
+        for m in (
+            "feats_of",
+            "vocab",
+            "clause_pieces",
+            "eval_sir",
+            "synth",
+            "verbalize",
+            "band_clause",
+            "compile_fence",
+            "iou_v",
+        ):
             g[m] = getattr(self, m)
         g["ds"] = self
 
     # ---------- 预置数据集 ----------
     @classmethod
     def guangzhou(cls, data_dir):
-        here = Path(__file__).resolve().parent
+
         cfg = Path(data_dir) / "territory_ir_dataset.json"
         if cfg.exists():
             c = json.loads(cfg.read_text(encoding="utf-8"))
             return cls(data_dir=data_dir, **c)
         import os
         import warnings
+
         home = os.path.expanduser("~")
         # 环境变量优先于 ~/Downloads 硬编码(见 issue #1)
         env_roadnet = os.environ.get("TIR_GZ_ROADNET")
@@ -477,13 +576,26 @@ class Dataset:
                 "Dataset.guangzhou 回退到硬编码 ~/Downloads/... 路径。"
                 "生产请用 <data_dir>/territory_ir_dataset.json 或 "
                 "环境变量 TIR_GZ_ROADNET / TIR_GZ_STREETS。",
-                stacklevel=2)
+                stacklevel=2,
+            )
         return cls(
             data_dir=data_dir,
-            roadnet_path=env_roadnet if used_env else os.path.join(
-                home, "Downloads",
-                "边界数据-路网-到区县带海岸线-四级路网-广东省-广州市.geojson"),
-            streets_path=env_streets if used_env else os.path.join(
-                home, "Downloads", "区划数据-街道-广东省-广州市.geojson"),
+            roadnet_path=(
+                env_roadnet
+                if used_env
+                else os.path.join(
+                    home,
+                    "Downloads",
+                    "边界数据-路网-到区县带海岸线-四级路网-广东省-广州市.geojson",
+                )
+            ),
+            streets_path=(
+                env_streets
+                if used_env
+                else os.path.join(
+                    home, "Downloads", "区划数据-街道-广东省-广州市.geojson"
+                )
+            ),
             osm_path=os.path.join(data_dir, "gz_osm_full.json"),
-            name="guangzhou")
+            name="guangzhou",
+        )

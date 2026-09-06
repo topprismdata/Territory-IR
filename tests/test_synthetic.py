@@ -6,13 +6,11 @@
 - compile_fence 输出 J=1.0(完美保真)
 - 条款回放 vs 真值片一致
 """
-import json
-from pathlib import Path
 
 import pytest
 
-from tests.synthetic_fixture import make_synthetic_dataset
 from territory_ir.dataset import Dataset
+from tests.synthetic_fixture import make_synthetic_dataset
 
 
 @pytest.fixture
@@ -107,5 +105,6 @@ class TestSyntheticRoadsAndFences:
 
     def test_road_line_lookup(self, ds):
         from territory_ir.semantics import road_line_gcj
+
         line = road_line_gcj(ds, "横向大道")
         assert not line.is_empty

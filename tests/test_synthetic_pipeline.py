@@ -1,12 +1,11 @@
 """合成数据集上的全管线测试（完全密闭，不依赖任何本地私有数据，可在任何机器与CI秒级运行）。"""
-import tempfile
-from pathlib import Path
+
 import pytest
 
-from tests.synthetic_fixture import make_synthetic_dataset
+from server import Copilot
 from territory_ir.dataset import Dataset
 from territory_ir.session import Session
-from server import Copilot
+from tests.synthetic_fixture import make_synthetic_dataset
 
 
 @pytest.fixture

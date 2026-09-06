@@ -1,4 +1,5 @@
 """GCJ-02 ⇄ WGS-84 坐标转换（中国国标偏移模型，与线上实现逐位一致）。"""
+
 from __future__ import annotations
 
 import math
@@ -59,27 +60,38 @@ def convert(pt, to_wgs: bool) -> tuple[float, float]:
 
 # ---------- numpy 向量化批量转换（大对象集一次性转换用） ----------
 
+
 def _tl_vec(x, y):
     import numpy as np
-    r = -100.0 + 2.0*x + 3.0*y + 0.2*y*y + 0.1*x*y + 0.2*np.sqrt(np.abs(x))
-    r += (20.0*np.sin(6.0*x*PI) + 20.0*np.sin(2.0*x*PI)) * 2.0/3.0
-    r += (20.0*np.sin(y*PI) + 40.0*np.sin(y/3.0*PI)) * 2.0/3.0
-    r += (160.0*np.sin(y/12.0*PI) + 320.0*np.sin(y*PI/30.0)) * 2.0/3.0
+
+    r = (
+        -100.0
+        + 2.0 * x
+        + 3.0 * y
+        + 0.2 * y * y
+        + 0.1 * x * y
+        + 0.2 * np.sqrt(np.abs(x))
+    )
+    r += (20.0 * np.sin(6.0 * x * PI) + 20.0 * np.sin(2.0 * x * PI)) * 2.0 / 3.0
+    r += (20.0 * np.sin(y * PI) + 40.0 * np.sin(y / 3.0 * PI)) * 2.0 / 3.0
+    r += (160.0 * np.sin(y / 12.0 * PI) + 320.0 * np.sin(y * PI / 30.0)) * 2.0 / 3.0
     return r
 
 
 def _to_vec(x, y):
     import numpy as np
-    r = 300.0 + x + 2.0*y + 0.1*x*x + 0.1*x*y + 0.1*np.sqrt(np.abs(x))
-    r += (20.0*np.sin(6.0*x*PI) + 20.0*np.sin(2.0*x*PI)) * 2.0/3.0
-    r += (20.0*np.sin(x*PI) + 40.0*np.sin(x/3.0*PI)) * 2.0/3.0
-    r += (150.0*np.sin(x/12.0*PI) + 300.0*np.sin(x/30.0*PI)) * 2.0/3.0
+
+    r = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * np.sqrt(np.abs(x))
+    r += (20.0 * np.sin(6.0 * x * PI) + 20.0 * np.sin(2.0 * x * PI)) * 2.0 / 3.0
+    r += (20.0 * np.sin(x * PI) + 40.0 * np.sin(x / 3.0 * PI)) * 2.0 / 3.0
+    r += (150.0 * np.sin(x / 12.0 * PI) + 300.0 * np.sin(x / 30.0 * PI)) * 2.0 / 3.0
     return r
 
 
 def wgs2gcj_vec(lon, lat):
     """numpy 向量化批量 wgs2gcj。"""
     import numpy as np
+
     lon = np.asarray(lon, dtype=float)
     lat = np.asarray(lat, dtype=float)
     rl = lat / 180.0 * PI
@@ -95,6 +107,7 @@ def wgs2gcj_vec(lon, lat):
 def gcj2wgs_vec(lon, lat):
     """numpy 向量化批量 gcj2wgs（6 轮定点迭代）。"""
     import numpy as np
+
     lon = np.asarray(lon, dtype=float)
     lat = np.asarray(lat, dtype=float)
     w_lon, w_lat = lon.copy(), lat.copy()
