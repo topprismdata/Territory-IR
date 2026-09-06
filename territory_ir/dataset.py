@@ -30,6 +30,9 @@ CLASS_RANK = {"motorway": 0, "motorway_link": 1, "trunk": 1, "trunk_link": 2,
               "residential": 6, "unclassified": 7, "service": 8}
 RIVER_RANK = 3
 
+# 审计 M4:路网文件 sha256 按 path 缓存(进程内不变),避免每次 compile_fence 全量重读
+_ROADNET_HASH: dict = {}
+
 
 class Dataset:
     """一座城市的 TerritoryIR 数据集。"""
@@ -49,7 +52,8 @@ class Dataset:
 
     # ---------- 构建 ----------
     def _build(self):
-        d = json.load(open(self.roadnet_path))
+        with open(self.roadnet_path, encoding="utf-8") as fh:
+            d = json.load(fh)
         self.parents, self.pstreet, self.pdistrict = [], [], []
         for f in d["features"]:
             g = f["geometry"]
@@ -61,7 +65,8 @@ class Dataset:
             self.pdistrict.append(pr.get("区[内置]", ""))
         self.pt = STRtree(self.parents)
 
-        sd = json.load(open(self.streets_path))
+        with open(self.streets_path, encoding="utf-8") as fh:
+            sd = json.load(fh)
         self.spoly, self.sname = [], []
         for f in sd["features"]:
             g = f["geometry"]
@@ -87,8 +92,10 @@ class Dataset:
         self.sbt = ops.unary_union([p.boundary for p in self.spoly])
         self.spoly_by_name = dict(zip(self.sname, self.spoly))
 
-        self.reg = json.load(open(Path(self.data_dir) / "region.json"))
-        self.osm = json.load(open(self.osm_path))
+        with open(Path(self.data_dir) / "region.json", encoding="utf-8") as fh:
+            self.reg = json.load(fh)
+        with open(self.osm_path, encoding="utf-8") as fh:
+            self.osm = json.load(fh)
 
         self.feat_geoms, self.feat_names, self.feat_rank = [], [], {}
         for r in self.osm["roads"]:
@@ -386,8 +393,14 @@ class Dataset:
                                    self.band_clause(zg, pc)))
         clauses = [cl for _, cl in chosen]
         import hashlib
-        libhash = hashlib.sha256(
-            open(self.roadnet_path, "rb").read()).hexdigest()[:16]
+        rp = str(self.roadnet_path)
+        if rp not in _ROADNET_HASH:
+            h = hashlib.sha256()
+            with open(rp, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            _ROADNET_HASH[rp] = h.hexdigest()[:16]
+        libhash = _ROADNET_HASH[rp]
         ir = {"area_id": fence["area_id"], "ir_version": 1,
               "tessellation": "U",
               "unit_library": f"{libhash}+cutv2",
