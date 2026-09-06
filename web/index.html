@@ -197,7 +197,7 @@ async function send(){
       }
     }
     if (payload){
-      wait.innerHTML = (payload.reply||"（空）").replace(/\*\*(.+?)\*\*/g,"<b>$1</b>");
+      wait.innerHTML = esc(payload.reply||"（空）").replace(/\*\*(.+?)\*\*/g,"<b>$1</b>");
       procLine("✅ 完成", true);
       if (payload.state){ STATE = payload.state; draw(); }
       if (payload.focus) focusFence(payload.focus);
@@ -224,15 +224,18 @@ function procLine(text, isDone){
   el("proc").appendChild(d);
   el("proc").scrollTop = el("proc").scrollHeight;
 }
+function clearPreview(){ const p = document.querySelector(".preview"); if (p) p.remove(); }
 async function applyP(){
   const r = await (await fetch("/api/apply", {method:"POST"})).json();
-  bubble("bot", r.reply.replace(/\*\*(.+?)\*\*/g,"<b>$1</b>"));
+  bubble("bot", esc(r.reply).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>"));
   if (r.state){ STATE = r.state; draw(); }
+  clearPreview();
 }
 async function discardP(){
   const r = await (await fetch("/api/discard", {method:"POST"})).json();
-  bubble("bot", r.reply);
+  bubble("bot", esc(r.reply));
   STATE = r.state; draw();
+  clearPreview();
 }
 function quick(t){ el("inp").value = t; send(); }
 async function clearAll(){
