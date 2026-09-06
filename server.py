@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
@@ -370,13 +371,27 @@ def make_handler(cp: Copilot, index_html: str):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8802)
-    ap.add_argument("--data", default=str(ROOT.parent / "sales-data" / "gz"))
+    # 默认 data 路径:先 TIR_DATA 环境变量,再 --data 参数,再 ./data/gz
+    ap.add_argument("--data", default=os.environ.get("TIR_DATA") or str(ROOT / "data" / "gz"))
     a = ap.parse_args()
     data_dir = Path(a.data)
     if not data_dir.exists():
-        alt = Path(__file__).resolve().parent.parent / "sales-resource-allocation-framework" / "data" / "gz"
+        # 兜底:父目录的 sales-data/gz (兼容旧布局)
+        alt = ROOT.parent / "sales-data" / "gz"
+        if not alt.exists():
+            alt = ROOT.parent / "sales-resource-allocation-framework" / "data" / "gz"
         if alt.exists():
             data_dir = alt
+        else:
+            print(
+                f"✗ 数据目录不存在: {a.data}\n"
+                f"  解决:\n"
+                f"    1. 准备数据到 ./data/gz 并在 territory_ir_dataset.json 配置路径\n"
+                f"    2. 或用 --data /path/to/your/data 指定\n"
+                f"    3. 或 export TIR_DATA=/path/to/your/data\n"
+                f"  缺失会触发 Dataset.guangzhou 回退,见 issue #1",
+                file=sys.stderr)
+            sys.exit(2)
     cp = Copilot(data_dir)
     index_html = (WEB / "index.html").read_text(encoding="utf-8")
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(cp, index_html))

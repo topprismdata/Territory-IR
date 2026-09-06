@@ -453,12 +453,22 @@ class Dataset:
             c = json.loads(cfg.read_text(encoding="utf-8"))
             return cls(data_dir=data_dir, **c)
         import os
+        import warnings
         home = os.path.expanduser("~")
+        # 环境变量优先于 ~/Downloads 硬编码(见 issue #1)
+        roadnet = os.environ.get("TIR_GZ_ROADNET") or os.path.join(
+            home, "Downloads",
+            "边界数据-路网-到区县带海岸线-四级路网-广东省-广州市.geojson")
+        streets = os.environ.get("TIR_GZ_STREETS") or os.path.join(
+            home, "Downloads", "区划数据-街道-广东省-广州市.geojson")
+        warnings.warn(
+            "Dataset.guangzhou 回退到硬编码 ~/Downloads/... 路径。"
+            "生产请用 <data_dir>/territory_ir_dataset.json 或 "
+            "环境变量 TIR_GZ_ROADNET / TIR_GZ_STREETS。",
+            stacklevel=2)
         return cls(
             data_dir=data_dir,
-            roadnet_path=os.path.join(
-                home, "Downloads", "边界数据-路网-到区县带海岸线-四级路网-广东省-广州市.geojson"),
-            streets_path=os.path.join(
-                home, "Downloads", "区划数据-街道-广东省-广州市.geojson"),
+            roadnet_path=roadnet,
+            streets_path=streets,
             osm_path=os.path.join(data_dir, "gz_osm_full.json"),
             name="guangzhou")
