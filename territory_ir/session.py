@@ -10,6 +10,7 @@ pieces 非空时按片运算（可拆可并）；为空（库外导入）时仅�
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from pathlib import Path
 
@@ -100,10 +101,12 @@ class Session:
         from .coords import gcj2wgs
         tot = 0.0
         for poly in (geom.geoms if geom.geom_type == "MultiPolygon" else [geom]):
-            w = [[gcj2wgs(x, y)[0], gcj2wgs(x, y)[1]]
-                 for x, y in poly.exterior.coords]
-            tot += Polygon(w).area
-        return round(tot * 111.32 ** 2 * 0.92, 2)
+            w = [gcj2wgs(x, y) for x, y in poly.exterior.coords]
+            lat = sum(p[1] for p in w) / len(w)
+            # 平面近似:纬度 km/deg 固定 111.32,经度 km/deg = 111.32·cos(lat)。
+            # 旧实现硬编码广州纬度因子 0.92,换城市即错(审计 B1)。
+            tot += Polygon(w).area * 111.32 * 111.32 * math.cos(math.radians(lat))
+        return round(tot, 2)
 
     # ---------- 1. 导入 ----------
     def import_ring(self, name, ring) -> dict:
@@ -138,10 +141,18 @@ class Session:
             if not g or g.get("type") not in ("Polygon", "MultiPolygon"):
                 continue
             n += 1
-            ring = (g["coordinates"][0] if g["type"] == "Polygon"
-                    else max(g["coordinates"], key=len)[0])
-            nm = f"{name}" if len(geoms) == 1 else f"{name}-{n}"
-            out.append(self.import_ring(nm, ring))
+            # MultiPolygon 不再只取最大部分(审计 B2 静默丢几何):
+            # 每个部分独立成围栏,符合"多连通分量合法"的业务约定。
+            parts = ([g["coordinates"]] if g["type"] == "Polygon"
+                     else list(g["coordinates"]))
+            for pi, part in enumerate(parts, 1):
+                if len(geoms) == 1 and len(parts) == 1:
+                    nm = name
+                elif len(parts) == 1:
+                    nm = f"{name}-{n}"
+                else:
+                    nm = f"{name}-{n}.{pi}"
+                out.append(self.import_ring(nm, part[0]))
         if not out:
             raise ValueError("GeoJSON 中没有可用的 Polygon")
         return out
@@ -454,117 +465,6 @@ class Session:
         self.fences.append(p["merged"])
         self.pending = None
         self.save()
-
-    # ---------- 清空/删除 ----------
-    def clear(self, name_substr=None) -> int:
-        if name_substr:
-            f = self.find(name_substr)
-            self.fences.remove(f)
-            n = 1
-        else:
-            n = len(self.fences)
-            self.fences = []
-        self.save()
-        return n
-
-    # ---------- GeoJSON 导出 ----------
-    def to_geojson(self, fence) -> dict:
-        polys = ([{"type": "Polygon", "coordinates": [r]} for r in fence["rings"]])
-        feats = [{"type": "Feature",
-                  "properties": {"name": fence["name"], "km2": fence["km2"]},
-                  "geometry": p} for p in polys]
-        return {"type": "FeatureCollection", "features": feats}
-    # ---------- 4. 合并 ----------
-    def merge(self, name_substrings) -> dict:
-        fs = [self.find(s) for s in name_substrings]
-        if len(fs) < 2:
-            raise ValueError("合并至少需要两个围栏")
-        pieces = set()
-        for f in fs:
-            pieces |= (f["pieces"] or set())
-        if pieces:
-            geom = pieces_union(self.ds, pieces)
-        else:
-            geom = unary_union([Polygon(f["rings"][0]) for f in fs])
-            if geom.geom_type == "MultiPolygon":
-                geom = max(geom.geoms, key=lambda g: g.area)
-        for f in fs:
-            self.fences.remove(f)
-        merged = {"id": uuid.uuid4().hex[:8],
-                  "name": "+".join(f["name"] for f in fs)[:24],
-                  "rings": self._rings_of(geom), "pieces": pieces,
-                  "clauses": [cl for f in fs for cl in f.get("clauses", [])],
-                  "terms": self.describe_pieces(pieces),
-                  "km2": self._km2(self.ds, geom),
-                  "color": fs[0]["color"]}
-        self.fences.append(merged)
-        self.save()
-        return merged
-
-    # ---------- 清空/删除 ----------
-    def clear(self, name_substr=None) -> int:
-        if name_substr:
-            f = self.find(name_substr)
-            self.fences.remove(f)
-            n = 1
-        else:
-            n = len(self.fences)
-            self.fences = []
-        self.save()
-        return n
-
-    # ---------- GeoJSON 导出 ----------
-    def to_geojson(self, fence) -> dict:
-        polys = ([{"type": "Polygon", "coordinates": [r]} for r in fence["rings"]])
-        feats = [{"type": "Feature",
-                  "properties": {"name": fence["name"], "km2": fence["km2"]},
-                  "geometry": p} for p in polys]
-        return {"type": "FeatureCollection", "features": feats}
-    # ---------- 清空/删除 ----------
-    def clear(self, name_substr=None) -> int:
-        if name_substr:
-            f = self.find(name_substr)
-            self.fences.remove(f)
-            n = 1
-        else:
-            n = len(self.fences)
-            self.fences = []
-        self.save()
-        return n
-
-    # ---------- GeoJSON 导出 ----------
-    def to_geojson(self, fence) -> dict:
-        polys = ([{"type": "Polygon", "coordinates": [r]} for r in fence["rings"]])
-        feats = [{"type": "Feature",
-                  "properties": {"name": fence["name"], "km2": fence["km2"]},
-                  "geometry": p} for p in polys]
-        return {"type": "FeatureCollection", "features": feats}
-    # ---------- 4. 合并 ----------
-    def merge(self, name_substrings) -> dict:
-        fs = [self.find(s) for s in name_substrings]
-        if len(fs) < 2:
-            raise ValueError("合并至少需要两个围栏")
-        pieces = set()
-        for f in fs:
-            pieces |= (f["pieces"] or set())
-        if pieces:
-            geom = pieces_union(self.ds, pieces)
-        else:
-            geom = unary_union([Polygon(f["rings"][0]) for f in fs])
-            if geom.geom_type == "MultiPolygon":
-                geom = max(geom.geoms, key=lambda g: g.area)
-        for f in fs:
-            self.fences.remove(f)
-        merged = {"id": uuid.uuid4().hex[:8],
-                  "name": "+".join(f["name"] for f in fs)[:24],
-                  "rings": self._rings_of(geom), "pieces": pieces,
-                  "clauses": [cl for f in fs for cl in f.get("clauses", [])],
-                  "terms": self.describe_pieces(pieces),
-                  "km2": self._km2(self.ds, geom),
-                  "color": fs[0]["color"]}
-        self.fences.append(merged)
-        self.save()
-        return merged
 
     # ---------- 清空/删除 ----------
     def clear(self, name_substr=None) -> int:
