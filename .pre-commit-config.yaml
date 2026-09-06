@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -10,19 +10,23 @@ repos:
         args: ['--maxkb=1000']
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.4.4
+    rev: v0.16.6
     hooks:
       - id: ruff
         args: [--fix]
 
   - repo: https://github.com/psf/black
-    rev: 24.4.2
+    rev: 26.5.1
     hooks:
       - id: black
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.10.0
+    rev: v2.3.1
     hooks:
       - id: mypy
         additional_dependencies: ["shapely>=2.0", "numpy>=1.24"]
         args: [--config-file=pyproject.toml]
+        # mypy 门面与 CI 声明的范围一致（territory_ir/ + server.py）；
+        # scripts/ 与 tests/ 为本地/一次性脚本，不纳入硬门，避免
+        # 目录式 CI 与逐文件钩子的范围分歧（集成评审 #1）。
+        files: '^(territory_ir/|server\.py)'
