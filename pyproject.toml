@@ -12,6 +12,7 @@ dev = [
     "ruff>=0.4",
     "black>=24.4",
     "mypy>=1.10",
+    "pre-commit>=3",
 ]
 
 [tool.setuptools.packages.find]
