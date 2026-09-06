@@ -10,3 +10,9 @@ dev = ["pytest>=8", "pytest-cov>=5"]
 
 [tool.setuptools.packages.find]
 include = ["territory_ir*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "local_data: 依赖本机大体积真实地理数据的测试（CI默认跳过）",
+]

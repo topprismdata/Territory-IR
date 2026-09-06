@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.local_data
+
 REPO = Path(__file__).resolve().parent.parent
 GZ = Path(os.environ.get("TIR_GZ_DATA",
                          REPO.parent / "sales-resource-allocation-framework" / "data" / "gz"))
