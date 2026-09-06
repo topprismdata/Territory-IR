@@ -6,7 +6,13 @@ requires-python = ">=3.10"
 dependencies = ["shapely>=2.0", "numpy>=1.24"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-cov>=5"]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.4",
+    "black>=24.4",
+    "mypy>=1.10",
+]
 
 [tool.setuptools.packages.find]
 include = ["territory_ir*"]
@@ -16,3 +22,48 @@ testpaths = ["tests"]
 markers = [
     "local_data: 依赖本机大体积真实地理数据的测试（CI默认跳过）",
 ]
+addopts = "-m 'not local_data'"
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "RUF001", "RUF002", "RUF003",  # 中文全角标点与文本符号误报
+    "E501",                        # 格式化由 black 统一负责，不硬报超长
+    "B008",                        # 函数默认参数调用
+]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.mypy]
+python_version = "3.10"
+ignore_missing_imports = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[tool.coverage.run]
+source = ["territory_ir", "server"]
+omit = [
+    "tests/*",
+    "scripts/*",
+    "**/__pycache__/*",
+]
+
+[tool.coverage.report]
+fail_under = 35.0
+show_missing = true
+skip_covered = false
