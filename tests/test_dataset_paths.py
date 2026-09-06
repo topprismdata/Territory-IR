@@ -83,7 +83,11 @@ class TestEnvOverride:
 class TestFallbackWarns:
     """无配置无环境变量:warn + 回退 ~/Downloads"""
 
-    def test_warns_on_hardcoded_fallback(self, tmp_data_dir):
+    def test_warns_on_hardcoded_fallback(self, tmp_data_dir, monkeypatch, tmp_path):
+        # 密闭性:把 HOME 指向不存在的目录,保证硬编码回退路径必然不存在,
+        # 不依赖测试机 ~/Downloads 是否恰好放了真实路网。
+        monkeypatch.setenv("HOME", str(tmp_path / "absent-home"))
+
         from territory_ir.dataset import Dataset
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
