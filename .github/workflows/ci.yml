@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint-and-test:
+    name: Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.12"]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Ruff Lint Check
+        run: ruff check .
+
+      - name: Black Format Check
+        run: black --check .
+
+      - name: Mypy Type Check
+        run: mypy territory_ir/ server.py
+
+      - name: Run Hermetic Pytest with Coverage
+        run: |
+          pytest --cov=territory_ir --cov=server --cov-report=xml --cov-report=term-missing
+
+      - name: Publish Coverage Summary
+        if: matrix.python-version == '3.10'
+        run: |
+          echo "### 📊 测试覆盖率报告 (Python ${{ matrix.python-version }})" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          coverage report >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
