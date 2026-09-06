@@ -307,6 +307,7 @@ def make_handler(cp: Copilot, index_html: str):
                              if f.suffix == ".js" else
                              "text/css" if f.suffix == ".css" else
                              "image/x-icon" if f.suffix == ".ico" else
+                             "text/html; charset=utf-8" if f.suffix == ".html" else
                              "application/octet-stream")
                     self._send(200, f.read_bytes(), ctype)
                 else:
