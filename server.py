@@ -27,7 +27,6 @@ from territory_ir import session as sess_mod      # noqa: E402
 from territory_ir import llm as tir_llm           # noqa: E402
 
 WEB = ROOT / "web"
-DATA = Path(__file__).resolve().parent.parent / "sales-data" / "gz"
 
 
 import re as _re
@@ -85,12 +84,12 @@ def _fast_intent(text: str):
 
 
 class Copilot:
-    def __init__(self, data_dir: Path):
+    def __init__(self, data_dir: Path, persist_dir: Path | None = None):
         self.ds = Dataset.guangzhou(data_dir=str(data_dir))
-        self.sess = sess_mod.Session(self.ds, persist_dir=str(ROOT / "sessions"))
+        self.sess = sess_mod.Session(
+            self.ds, persist_dir=str(persist_dir or (ROOT / "sessions")))
         self.sess.load()
         self.pending = None   # {"kind":"split"|"merge", "result":[fence...], "removed":[...], "desc":str}
-
     # ---------- 动作 ----------
     def state(self):
         return {"fences": self.sess.public(), "pending": self._pending_public()}
@@ -218,9 +217,9 @@ class Copilot:
                 reply = (f"已删除「{tgt}」。" if tgt else f"已清空全部 {n} 个围栏。")
             elif act == "split":
                 step(f"✂️ 沿「{intent.get('road')}」按片质心分堆（{intent.get('side')}侧）…")
-                f1, f2 = self.sess.split(intent.get("target", ""),
-                                         intent.get("road", ""),
-                                         intent.get("side", "west"))
+                f1, f2 = self.sess.split_preview(intent.get("target", ""),
+                                                 intent.get("road", ""),
+                                                 intent.get("side") or None)
                 self.pending = {"kind": "split", "result": [f1, f2],
                                 "removed": [], "desc": intent.get("road", "")}
                 pending = self._pending_public()
@@ -231,22 +230,26 @@ class Copilot:
             elif act == "merge":
                 tg = intent.get("targets") or []
                 step(f"🔗 片并集合并 {len(tg)} 个围栏…")
-                fs = [self.sess.find(s) for s in tg]
-                removed = [dict(name=f["name"], id=f["id"]) for f in fs]
-                self.pending = {"kind": "merge", "result": None,
-                                "removed": [f["name"] for f in fs],
-                                "desc": "+".join(f["name"] for f in fs)}
+                merged = self.sess.merge_preview(tg)   # 零副作用,校验+预览
+                parents = self.sess.pending["parents"]
+                self.pending = {"kind": "merge", "result": [merged],
+                                "removed": list(parents),
+                                "desc": "+".join(parents)}
                 pending = self._pending_public()
-                reply = (f"合并预览：{' ＋ '.join(f['name'] for f in fs)}"
-                         f"（{len(fs)} 个围栏）。确认后点「应用」。")
+                reply = (f"合并预览：**{merged['name']}**（{merged['km2']} km²，"
+                         f"{len(parents)} 个围栏）。确认后点「应用」。")
             else:
                 reply = ("没理解这个指令。可以试试：导入围栏、"
                          "「描述 @围栏」、「联和街道全域，北至广汕公路 建围栏」、"
                          "「沿花莞高速分开 西半边」、「把 A 和 B 合并」。")
+        except ValueError as e:
+            # 业务校验失败(找不到/歧义/分不开):指令本身的问题,可读返回
+            reply = f"✗ {e}"
         except Exception as e:  # noqa: BLE001
+            # 真正的 bug:堆栈进服务端日志,用户侧带异常类型便于诊断(审计 A4)
             import traceback
             traceback.print_exc()
-            reply = f"✗ {e}"
+            reply = f"✗ 内部错误 {type(e).__name__}: {e}"
         return {"reply": reply, "focus": focus, "pending": pending,
                 "state": self.state()}
 
@@ -255,17 +258,16 @@ class Copilot:
             return {"reply": "没有待应用的预览。"}
         p = self.pending
         if p["kind"] == "split":
-            self.sess.fences += p["result"]
+            self.sess.split_commit()   # 移除父围栏,加入两个子围栏
         else:
-            merged = self.sess.merge(p["removed"])  # removed 存的是名字
-            p["result"] = [merged]
-        self.sess.save()
+            self.sess.merge_commit()   # 移除父围栏,加入合并结果
         names = "、".join(f["name"] for f in p["result"])
         self.pending = None
         return {"reply": f"已应用：{names}", "state": self.state()}
 
     def discard(self):
         self.pending = None
+        self.sess.pending = None   # Session 侧预览态同步清除
         return {"reply": "已放弃预览。", "state": self.state()}
 
     def import_geo(self, name, geo):
@@ -318,6 +320,9 @@ def make_handler(cp: Copilot, index_html: str):
 
         def do_POST(self):
             n = int(self.headers.get("Content-Length", 0))
+            if n > 64 * 1024 * 1024:   # 审计 M6:限制请求体大小
+                self._send(413, {"error": "请求体过大(>64MB)"})
+                return
             body = json.loads(self.rfile.read(n)) if n else {}
             if self.path == "/api/chat":
                 self._send(200, cp.chat(str(body.get("text", ""))))
@@ -337,16 +342,24 @@ def make_handler(cp: Copilot, index_html: str):
                     r = cp.chat(str(body.get("text", "")), emit=emit)
                     self.wfile.write(f"data: {json.dumps({'type':'done', **r}, ensure_ascii=False)}\n\n".encode())
                     self.wfile.flush()
-                except Exception as e:  # noqa: BLE001
+                except ValueError as e:
                     self.wfile.write(f"data: {json.dumps({'type':'done','reply':f'✗ {e}'}, ensure_ascii=False)}\n\n".encode())
+                except Exception as e:  # noqa: BLE001
+                    import traceback
+                    traceback.print_exc()
+                    self.wfile.write(f"data: {json.dumps({'type':'done','reply':f'✗ 内部错误 {type(e).__name__}: {e}'}, ensure_ascii=False)}\n\n".encode())
                 self.wfile.write(b"data: [DONE]\n\n")
                 self.wfile.flush()
             elif self.path == "/api/import":
                 try:
                     self._send(200, cp.import_geo(
                         str(body.get("name", "导入围栏")), body.get("geojson")))
-                except Exception as e:  # noqa: BLE001
+                except ValueError as e:   # 业务校验(文件缺 Polygon 等) → 400
                     self._send(400, {"error": str(e)})
+                except Exception as e:  # noqa: BLE001
+                    import traceback
+                    traceback.print_exc()
+                    self._send(500, {"error": f"内部错误 {type(e).__name__}: {e}"})
             elif self.path == "/api/apply":
                 self._send(200, cp.apply())
             elif self.path == "/api/discard":
@@ -376,7 +389,7 @@ def main():
     ap.add_argument("--data", default=os.environ.get("TIR_DATA") or str(ROOT / "data" / "gz"))
     a = ap.parse_args()
     data_dir = Path(a.data)
-    if not data_dir.exists():
+    if not (data_dir / "region.json").exists():   # 只判目录存在会踩到空目录(审计 M5)
         # 兜底:父目录的 sales-data/gz (兼容旧布局)
         alt = ROOT.parent / "sales-data" / "gz"
         if not alt.exists():
