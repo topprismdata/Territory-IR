@@ -3,7 +3,11 @@ name = "territory-ir"
 version = "0.3.0"
 description = "TerritoryIR — 领地单元片编译/重演/调整核心（统一铺盖 → 真值片 → 条款 → 重演）"
 requires-python = ">=3.10"
-dependencies = ["shapely>=2.0", "numpy>=1.24"]
+dependencies = [
+    "shapely>=2.0",
+    "numpy>=1.24",
+    "coords-core @ git+https://github.com/topprismdata/coords-core.git@v0.1.0",
+]
 
 [project.optional-dependencies]
 dev = [
@@ -74,3 +78,7 @@ omit = [
 fail_under = 35.0
 show_missing = true
 skip_covered = false
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
