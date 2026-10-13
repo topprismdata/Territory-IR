@@ -1,6 +1,6 @@
 [project]
 name = "territory-ir"
-version = "0.3.1"
+version = "0.3.2"
 description = "TerritoryIR — 领地单元片编译/重演/调整核心（统一铺盖 → 真值片 → 条款 → 重演）"
 requires-python = ">=3.10"
 dependencies = [

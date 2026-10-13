@@ -13,5 +13,5 @@
 from . import api, coords, roadsem, semantics
 from .dataset import Dataset
 
-__version__ = "0.3.1"
+__version__ = "0.3.2"
 __all__ = ["Dataset", "api", "coords", "roadsem", "semantics", "__version__"]
