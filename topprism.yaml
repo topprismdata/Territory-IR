@@ -1,0 +1,15 @@
+topprism:
+  purpose:
+    - territory-planning
+  capability: territory-bidirectional-compilation
+  platform_layer: decision-engine
+  # maturity 枚举(组织级四档): specification-frozen | experiment-validated | applied-component | certified-component
+  maturity: experiment-validated
+  evidence:
+    type: automated-test-suite
+    scope: >
+      41 hermetic tests / 5 skipped (LLM 网络用例) / 6 deselected (local_data 门禁排除);
+      CI 3.10+3.12 双版本; ruff/black/mypy 硬绿门 (pre-commit + CI 同版本工具链);
+      coords.py 收敛 coords-core v0.1.0 shim (位级金标锁定);
+      43 真实片区四向评估依赖本地 data/ (OSM 衍生, 不随仓发布)。
+  customer_data_in_repo: false
