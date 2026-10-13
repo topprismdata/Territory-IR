@@ -14,6 +14,7 @@ from shapely.ops import unary_union
 
 from .coords import wgs2gcj
 from .dataset import Dataset
+from .roadsem import norm_name as _norm_name  # WP11: 归一化单源于 roadsem
 
 if TYPE_CHECKING:
     from shapely.geometry import MultiPolygon, Polygon
@@ -46,12 +47,6 @@ def osm_catalog(ds: Dataset) -> dict:
         except Exception:  # noqa: BLE001
             pass
     return {"roads": roads, "rivers": {}, "refs": {}, "districts": districts}
-
-
-def _norm_name(s: str) -> str:
-    import re as _re
-
-    return _re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(s).lower())
 
 
 _line_cache: dict = {}

@@ -10,8 +10,8 @@
     row = ds.compile_fence(fence)      # → {human_terms, engine_terms, T, S, J, iou}
 """
 
-from . import coords, semantics
+from . import coords, roadsem, semantics
 from .dataset import Dataset
 
-__version__ = "0.1.0"
-__all__ = ["Dataset", "coords", "semantics", "__version__"]
+__version__ = "0.3.1"
+__all__ = ["Dataset", "coords", "roadsem", "semantics", "__version__"]

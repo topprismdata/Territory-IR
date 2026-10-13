@@ -19,13 +19,7 @@ from shapely.geometry import LineString, Polygon
 from shapely.strtree import STRtree
 
 from .coords import gcj2wgs_vec
-
-
-def _norm_key(s: str) -> str:
-    import re as _re
-
-    return _re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", str(s).lower())
-
+from .roadsem import load_aliases as _load_aliases
 
 CLASS_RANK = {
     "motorway": 0,
@@ -226,12 +220,7 @@ class Dataset:
         if not ap.exists():
             ap = Path(__file__).resolve().parent / "road_aliases.json"
         if ap.exists():
-            raw = json.loads(ap.read_text(encoding="utf-8"))
-            # json.loads 的 dict 键在运行时恒为 str；不同 typeshed 版本可能把
-            # raw.items() 的键推断成 int，故用 isinstance 显式收窄（非抑制）。
-            for k, v in raw.items():
-                if isinstance(k, str) and not k.startswith("_"):
-                    self.road_aliases[_norm_key(k)] = v
+            self.road_aliases = _load_aliases(ap)
 
     def _add_feat(self, nm, g, rk_default):
         parts = (
